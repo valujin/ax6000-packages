@@ -1,0 +1,21 @@
+SPRD PCIe: retain the blocking allocation semantics of iommu_map on Linux 6.6.
+
+sprd_pcie_iommu_init is called directly from PCI probe before driver spinlocks.
+The old five-argument iommu_map used GFP_KERNEL internally; Linux 6.3 exposes
+that allocation flag in its public API. No kernel Kconfig symbols are changed.
+
+References:
+https://github.com/torvalds/linux/blob/v6.2/drivers/iommu/iommu.c
+https://github.com/torvalds/linux/blob/v6.3/drivers/iommu/iommu.c
+
+--- a/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/pcie/sprd_pcie_ep_device.c
++++ b/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/pcie/sprd_pcie_ep_device.c
+@@ -231,7 +231,7 @@
+ 			dev_info(dev, "sprd_pcie_iommu_init iova:%d have been used", (u32)addr);
+ 			continue;
+ 		}
+-		ret = iommu_map(domain, addr, addr, pg_size, IOMMU_READ | IOMMU_WRITE);
++		ret = iommu_map(domain, addr, addr, pg_size, IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
+ 		if (ret) {
+ 			dev_info(dev, "sprd_pcie_iommu_init iommu_map failed");
+ 			return;

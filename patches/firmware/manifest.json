@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "source_commit": "ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8",
+  "kernel_series": "6.6",
+  "patches": [
+    {
+      "patch": "100-sprd-pcie-linux-6.6-iommu-map.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/pcie/sprd_pcie_ep_device.c",
+      "sha256": "546968e67d3684a700041c74259eaff40f7f6399fca23b3abfad9fd656aef8d7",
+      "before_sha256": "b5232ff6fb47d151400005cba4f7829a2408ed7848af020ac430dcfc09c7a9b3",
+      "after_sha256": "d016e34eda4ac1df124233253a01d2d1aa3d58385ff553956efdf67f2e775c88"
+    }
+  ]
+}

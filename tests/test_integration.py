@@ -15,6 +15,7 @@ import unittest
 from urllib.parse import urlsplit
 
 from test_publish import ipk
+from test_firmware_patches import vendor_source_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 USIGN = os.environ.get('USIGN') or shutil.which('usign')
@@ -123,6 +124,12 @@ class FirmwareExportIntegration(unittest.TestCase):
             (source / '.config').write_text('CONFIG_TARGET_mediatek=y\n')
             (source / 'build-selection.json').write_text(json.dumps(
                 {'selected_kmods': ['kmod-wireguard', 'kmod-ipt-geoip', 'kmod-amneziawg']}))
+            source_patches = vendor_source_fixture(source)['patches']
+            fixes = subprocess.run(['python3', str(ROOT / 'scripts/prepare-firmware.py'),
+                                    '--profile', str(profile_path), '--lock', str(lock_path),
+                                    '--source-dir', str(source), '--phase', 'vendor-fixes'],
+                                   text=True, capture_output=True)
+            self.assertEqual(fixes.returncode, 0, fixes.stderr)
             output = root / 'raw'
             result = subprocess.run(['python3', str(ROOT / 'scripts/prepare-firmware.py'),
                                      '--profile', str(profile_path), '--lock', str(lock_path),
@@ -142,12 +149,14 @@ class FirmwareExportIntegration(unittest.TestCase):
                              profile['id'] + '-' + profile['firmware']['commit'][:12] + '-'
                              + generated['sdk']['sha256'][:12])
             self.assertEqual(manifest['build_id'], generated['build_id'])
+            self.assertEqual(manifest['source_patches'], source_patches)
             self.assertEqual(urlsplit(generated['sdk']['url']).path,
                              '/packages/firmware/' + manifest['build_id'] + '/' + sdk.name)
             self.assertFalse(generated['all_kmods'])
             self.assertEqual(generated_lock['feeds']['base'], profile['firmware']['commit'])
             with tarfile.open(output / 'bin/targets/mediatek/filogic' / sdk.name) as archive:
                 baseline = json.load(archive.extractfile('sdk/ax6000-baseline/manifest.json'))
+                self.assertEqual(baseline['source_patches'], source_patches)
                 self.assertEqual(baseline['kernel_version'], abi)
                 self.assertEqual(baseline['frozen_kmods'], ['kmod-ipt-geoip', 'kmod-wireguard'])
                 self.assertEqual(baseline['refreshed_kmods'], ['kmod-amneziawg'])

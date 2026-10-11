@@ -75,6 +75,56 @@ def set_symbols(config, values):
         for symbol, value in sorted(values.items()))
 
 
+def apply_source_patch(source, spec, patch, check_only=False):
+    """Apply only the reviewed source revision; an exact patched file is idempotent."""
+    target = source / spec["path"]
+    prepare.require(target.is_file() and not target.is_symlink()
+                    and target.resolve().is_relative_to(source.resolve()),
+                    f"vendor patch target is absent or outside source: {spec['path']}")
+    prepare.require(hashlib.sha256(patch.read_bytes()).hexdigest() == spec["sha256"],
+                    f"vendor patch hash differs: {spec['patch']}")
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    if digest == spec["after_sha256"]:
+        return
+    prepare.require(digest == spec["before_sha256"],
+                    f"vendor patch source hash differs: {spec['path']}")
+    prepare.require(not check_only, f"required vendor patch is not applied: {spec['patch']}")
+    command = ["git", "apply", "--whitespace=nowarn"]
+    subprocess.run(command + ["--check", str(patch.resolve())], cwd=source, check=True)
+    subprocess.run(command + [str(patch.resolve())], cwd=source, check=True)
+    prepare.require(hashlib.sha256(target.read_bytes()).hexdigest() == spec["after_sha256"],
+                    f"vendor patch produced an unexpected source hash: {spec['path']}")
+
+
+def vendor_fixes(profile, source, check_only=False):
+    directory = Path(__file__).resolve().parents[1] / "patches/firmware"
+    manifest = json.loads((directory / "manifest.json").read_text())
+    target = source / "target/linux/mediatek/Makefile"
+    series = re.findall(r"^KERNEL_PATCHVER\s*:?=\s*(\S+)\s*$", target.read_text(), re.M)
+    prepare.require(series == [manifest["kernel_series"]], "vendor patches require the reviewed kernel series 6.6")
+    prepare.require(profile["firmware"]["commit"] == manifest["source_commit"],
+                    "vendor patches require the reviewed firmware source commit")
+    for spec in manifest["patches"]:
+        apply_source_patch(source, spec, directory / spec["patch"], check_only=check_only)
+    record = source / "firmware-source-patches.json"
+    if check_only:
+        prepare.require(record.is_file() and json.loads(record.read_text()) == manifest,
+                        "vendor patch provenance is absent or differs from the reviewed patches")
+    else:
+        record.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        selection = source / "build-selection.json"
+        if selection.is_file():
+            report = json.loads(selection.read_text())
+            report["source_patches"] = manifest["patches"]
+            selection.write_text(json.dumps(report, indent=2) + "\n")
+    return manifest["patches"]
+
+
+def overrides(profile, lock, source):
+    vendor_fixes(profile, source)
+    prepare.apply_overrides(lock, source, profile)
+
+
 def select(profile, source):
     available = prepare.available_packages(source)
     requested = set(profile["packages"])
@@ -100,11 +150,16 @@ def select(profile, source):
               "luci_languages": {name: "y" for name in profile.get("luci_languages", [])},
               "baseline_vendor_drivers": sorted(name for name in baseline_y if name in
                                                  {"kmod-mt_wifi", "kmod-conninfra", "kmod-warp", "kmod-mediatek_hnat"})}
+    patches = source / "firmware-source-patches.json"
+    if patches.is_file():
+        report["source_patches"] = json.loads(patches.read_text())["patches"]
     (source / "build-selection.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
 def verify(profile, source):
+    patches = vendor_fixes(profile, source, check_only=True)
     report = prepare.verify_selection(profile, source)
+    prepare.require(report.get("source_patches") == patches, "selection report omits vendor patch provenance")
     config = (source / ".config").read_text()
     enabled = set(re.findall(r"^CONFIG_TARGET_DEVICE_(.+)=y$", config, re.M))
     prepare.require(enabled == {"mediatek_filogic_DEVICE_xiaomi_redmi-router-ax6000-stock"},
@@ -240,6 +295,8 @@ def augment_sdk(profile, source, archive, controls, abi):
         (snapshot / "manifest.json").write_text(json.dumps(
             {"schema_version": 1, "source_commit": profile["firmware"]["commit"],
              "kernel_version": abi, "architecture": profile["firmware"]["architecture"],
+             "source_patches": json.loads((source / "firmware-source-patches.json").read_text())["patches"]
+             if (source / "firmware-source-patches.json").is_file() else [],
              "frozen_kmods": sorted(frozen), "frozen_packages": sorted(frozen_packages),
              "refreshed_kmods": sorted(refreshed & built_modules), "files": files},
             indent=2, sort_keys=True) + "\n")
@@ -353,6 +410,7 @@ def export(profile, lock, source, output):
     (output / "firmware-manifest.json").write_text(json.dumps({"build_id": build_id, "kernel_version": abi,
                                                                "recipe_commit": recipe_commit,
                                                                "source_commit": profile["firmware"]["commit"],
+                                                               "source_patches": report.get("source_patches", []),
                                                                "files": manifest}, indent=2) + "\n")
     print(f"Exported matching firmware, SDK and packages with kernel ABI {abi} to {output}")
 
@@ -367,7 +425,7 @@ def main():
     parser.add_argument("--lock", required=True, type=Path)
     parser.add_argument("--source-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--phase", choices=("validate", "configure", "check-feeds", "overrides", "select", "verify", "export"), default="validate")
+    parser.add_argument("--phase", choices=("validate", "configure", "check-feeds", "vendor-fixes", "overrides", "select", "verify", "export"), default="validate")
     args = parser.parse_args()
     try:
         profile, lock = json.loads(args.profile.read_text()), json.loads(args.lock.read_text())
@@ -377,12 +435,14 @@ def main():
             return
         prepare.require(args.source_dir is not None and args.source_dir.is_dir(), "--source-dir is required")
         if args.phase == "export":
+            vendor_fixes(profile, args.source_dir, check_only=True)
             prepare.require(args.output_dir is not None, "--output-dir is required")
             export(profile, lock, args.source_dir, args.output_dir)
         else:
             actions = {"configure": lambda: configure(profile, lock, args.source_dir),
                        "check-feeds": lambda: prepare.verify_feeds(profile, lock, args.source_dir),
-                       "overrides": lambda: prepare.apply_overrides(lock, args.source_dir, profile),
+                       "vendor-fixes": lambda: vendor_fixes(profile, args.source_dir),
+                       "overrides": lambda: overrides(profile, lock, args.source_dir),
                        "select": lambda: select(profile, args.source_dir),
                        "verify": lambda: verify(profile, args.source_dir)}
             actions[args.phase]()
