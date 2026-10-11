@@ -1,0 +1,56 @@
+Quectel GobiNet: use Linux 6.6 class and packet receive APIs.
+
+Update netdev address storage with eth_hw_addr_set. The two old bit writes are
+immediately and unconditionally overwritten by node_id in the same branch;
+remove those dead intermediate writes while preserving the final MAC address.
+Leave the inactive READ_QMI_URB_ERROR timer branch unchanged.
+
+References:
+https://github.com/torvalds/linux/blob/v6.6/include/linux/device/class.h
+https://github.com/torvalds/linux/blob/v6.6/net/core/dev.c
+https://github.com/torvalds/linux/blob/v6.6/include/linux/etherdevice.h
+
+--- a/package/mtk/applications/5g-modem/quectel_Gobinet/src/GobiUSBNet.c
++++ b/package/mtk/applications/5g-modem/quectel_Gobinet/src/GobiUSBNet.c
+@@ -306,7 +306,7 @@
+             reply->ip_summed = CHECKSUM_UNNECESSARY;
+             reply->pkt_type = PACKET_HOST;
+ 
+-            netif_rx_ni(reply);
++            netif_rx(reply);
+         }
+         return 1;
+     }
+@@ -944,7 +944,7 @@
+ #else
+     qmap_net->netdev_ops = &qmap_netdev_ops;
+ #endif
+-    memcpy (qmap_net->dev_addr, real_dev->dev_addr, ETH_ALEN);
++    eth_hw_addr_set(qmap_net, real_dev->dev_addr);
+ 
+ #ifdef QUECTEL_BRIDGE_MODE
+ 	priv->m_bridge_mode = !!(pDev->m_bridge_mode & BIT(offset_id));
+@@ -1536,13 +1536,7 @@
+ #endif
+ 
+ #if 1 //def DATA_MODE_RP
+-    /* make MAC addr easily distinguishable from an IP header */
+-    if ((pDev->net->dev_addr[0] & 0xd0) == 0x40) {
+-        /*clear this bit wil make usbnet apdater named as usbX(instead if ethX)*/
+-        pDev->net->dev_addr[0] |= 0x02;	/* set local assignment bit */
+-        pDev->net->dev_addr[0] &= 0xbf;	/* clear "IP" bit */
+-    }
+-    memcpy (pDev->net->dev_addr, node_id, sizeof node_id);
++    eth_hw_addr_set(pDev->net, node_id);
+     pDev->net->flags &= ~(IFF_BROADCAST | IFF_MULTICAST);
+     pDev->net->features |= (NETIF_F_VLAN_CHALLENGED);
+ #endif
+@@ -3149,7 +3143,7 @@
+ ===========================================================================*/
+ static int __init GobiUSBNetModInit( void )
+ {
+-   gpClass = class_create( THIS_MODULE, "GobiQMI" );
++   gpClass = class_create( "GobiQMI" );
+    if (IS_ERR( gpClass ) == true)
+    {
+       DBG( "error at class_create %ld\n", PTR_ERR( gpClass ) );

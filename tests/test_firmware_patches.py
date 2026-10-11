@@ -126,6 +126,55 @@ class FirmwarePatchTests(unittest.TestCase):
                 self.assertEqual(text.count('.size = sizeof(struct sched_attr)'), count)
                 self.assertNotIn('sched_setscheduler(', text)
 
+    def test_fibocom_sequence_generation_preserves_masks_and_fallbacks(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        target = self.source / 'package/mtk/applications/5g-modem/fibocom_MHI/src/core/mhi_boot.c'
+        self.assertTrue(target.is_file(), 'Fibocom random API compatibility patch is required')
+        before = gzip.decompress((ROOT / 'tests/fixtures/mhi-boot.c.gz').read_bytes())
+        patched = target.read_bytes()
+        self.assertEqual(patched.count(b'get_random_u32()'), 4)
+        self.assertEqual(patched.replace(b'get_random_u32()', b'prandom_u32()'), before)
+
+    def test_fibocom_packaging_and_autoload_use_actual_module_name(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        target = self.source / 'package/mtk/applications/5g-modem/fibocom_MHI/Makefile'
+        self.assertTrue(target.is_file(), 'Fibocom module packaging patch is required')
+        text = target.read_text()
+        self.assertIn('FILES:=$(PKG_BUILD_DIR)/fibo_mhi.ko', text)
+        self.assertIn('AUTOLOAD:=$(call AutoLoad,90,fibo_mhi)', text)
+        self.assertIn('define KernelPackage/pcie_mhi_fb\n', text)
+
+    def test_gobi_and_qmi_use_native_linux66_network_apis(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        base = self.source / 'package/mtk/applications/5g-modem'
+        gobi = base / 'quectel_Gobinet/src/GobiUSBNet.c'
+        self.assertTrue(gobi.is_file(), 'Gobi native Linux 6.6 API patch is required')
+        text = gobi.read_text()
+        self.assertIn('class_create( "GobiQMI" )', text)
+        self.assertIn('netif_rx(reply)', text)
+        self.assertIn('eth_hw_addr_set(pDev->net, node_id)', text)
+        self.assertNotIn('pDev->net->dev_addr[0] |=', text)
+        for path in ['fibocom_QMI_WWAN/src/qmi_wwan_f.c', 'quectel_QMI_WWAN/src/qmi_wwan_q.c']:
+            with self.subTest(driver=path):
+                text = (base / path).read_text()
+                self.assertIn('u64_stats_fetch_begin(&stats64->syncp)', text)
+                self.assertIn('u64_stats_fetch_retry(&stats64->syncp, start)', text)
+                if path.startswith('fibocom_'):
+                    self.assertIn('eth_hw_addr_set(qmap_net, real_dev->dev_addr)', text)
+                else:
+                    before = gzip.decompress((ROOT / 'tests/fixtures/qmi-wwan-q.c.gz').read_bytes())
+                    restored = text.replace('u64_stats_fetch_begin(', 'u64_stats_fetch_begin_irq(')
+                    restored = restored.replace('u64_stats_fetch_retry(', 'u64_stats_fetch_retry_irq(')
+                    self.assertEqual(restored.encode(), before)
+                self.assertNotIn('u64_stats_fetch_begin_irq(', text)
+                self.assertNotIn('u64_stats_fetch_retry_irq(', text)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -65,6 +65,55 @@
       "sha256": "714ae49b2a5089f59b4499a46dc2acb050fb6cf8bba5bfde4356c97562d7ce88",
       "before_sha256": "18f4253d635fd9eb12129ebeb8230c0cf9b9b5820aec8af65f5a80c156b80746",
       "after_sha256": "cbb966286f3b48d68386c771fe4bfa68dc55baa36abc3d53c15a0c07d7f3bf09"
+    },
+    {
+      "patch": "140-fibocom-mhi-linux-6.6-random.patch",
+      "path": "package/mtk/applications/5g-modem/fibocom_MHI/src/core/mhi_boot.c",
+      "sha256": "63646867c9cc514eb3f0998c17da528cf9d6e7c8ad82fbe357545c49d1ba9f44",
+      "before_sha256": "0cfdb5209f7a77e9130f870dc4ab437efb68a2e5aa57317533da1d2ae8d5509e",
+      "after_sha256": "47fc455e3f1e66f8be3d4420385841325606d35344deba941f6409acd228d467"
+    },
+    {
+      "patch": "141-fibocom-mhi-linux-6.6-class-create.patch",
+      "path": "package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_uci.c",
+      "sha256": "7a0b0354857074a4e4b4b59e063464a39bc8158278693757c2465a9fffd48a36",
+      "before_sha256": "44ec4f0f6c58810da80bd0bb41a87307a70b9850215f0c60657b066c9dde81f0",
+      "after_sha256": "d59b4e1e993288324bd7234b4c08427f65472e7e625e4c7176e0cca7fe452c6c"
+    },
+    {
+      "patch": "142-fibocom-mhi-linux-6.6-netdev.patch",
+      "path": "package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_netdev.c",
+      "sha256": "a98c1e565cbafa4eb1d25dcb26707c14f4f0b14844d6bec088e19b7fddeccda2",
+      "before_sha256": "41ab84d6e6228f82a1b215cd16bbf0b4502ef518d0f03c02e21075ef9dca4949",
+      "after_sha256": "f677027f8c1c29838b3cddd0585eb1ab220c6321be1dd4fde547e0e13e4c5cc9"
+    },
+    {
+      "patch": "143-fibocom-mhi-module-filename.patch",
+      "path": "package/mtk/applications/5g-modem/fibocom_MHI/Makefile",
+      "sha256": "d9f8b50a34d5ac4f79ab1b24839e79d28afda09b373ed201467accb7009608f9",
+      "before_sha256": "c7e124e097a12815f7642e1bef9531ad91c97b13e26c3374d4f8098d831f9123",
+      "after_sha256": "4601a38162382041c7deb76edd27ce66d70c6b7fd883277568e1941a5e36a0e3"
+    },
+    {
+      "patch": "150-quectel-gobinet-linux-6.6-netdev.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_Gobinet/src/GobiUSBNet.c",
+      "sha256": "b1e0de338fd6bf68ec1e0cf8f47894236948206713c7e1876deef520940c38ce",
+      "before_sha256": "5f2eeb1fea5dc042cae1534abfdba623af19e78e34eb587ce8d91329f57ca7e4",
+      "after_sha256": "d5e7f539ad254329982b9c78553f50f8e5bab8aa48132605915b39109c3ff622"
+    },
+    {
+      "patch": "151-fibocom-qmi-wwan-linux-6.6-stats.patch",
+      "path": "package/mtk/applications/5g-modem/fibocom_QMI_WWAN/src/qmi_wwan_f.c",
+      "sha256": "a8a5b70f59a605109c3205b48d04e47488b8f8f3ca71736ad6379abb088c5bb9",
+      "before_sha256": "31474e45c37ad1224336561b5a7cc510ab85d0f3ead17e47ee16e6b2d7793ffd",
+      "after_sha256": "1482d4b3afc2a0cfe1ff9b33991a8e9b4173e7c3871110a9f88ee516869b7cc1"
+    },
+    {
+      "patch": "152-quectel-qmi-wwan-linux-6.6-stats.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_QMI_WWAN/src/qmi_wwan_q.c",
+      "sha256": "133815d0b9fae840322550779f379b71dc2b6ea9be85ab6edbdc3551049b2f78",
+      "before_sha256": "bf5e0d58b1c1bbcaaa56779f18c061ee47df41e8e52a0b723930244bca8e916d",
+      "after_sha256": "a990297c96d3e76fbe11c8e1416284ca3b6bf3f96cc7425c9240683bb54fe69c"
     }
   ]
 }

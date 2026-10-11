@@ -1,0 +1,18 @@
+Fibocom MHI UCI: use Linux 6.6 single-argument class_create.
+
+Keep the existing class name and registration sequence unchanged.
+
+Reference:
+https://github.com/torvalds/linux/blob/v6.6/include/linux/device/class.h
+
+--- a/package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_uci.c
++++ b/package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_uci.c
+@@ -759,7 +759,7 @@
+ 		return ret;
+ 
+ 	mhi_uci_drv.major = ret;
+-	mhi_uci_drv.class = class_create(THIS_MODULE, MHI_UCI_DRIVER_NAME);
++	mhi_uci_drv.class = class_create(MHI_UCI_DRIVER_NAME);
+ 	if (IS_ERR(mhi_uci_drv.class)) {
+ 		unregister_chrdev(mhi_uci_drv.major, MHI_UCI_DRIVER_NAME);
+ 		return -ENODEV;

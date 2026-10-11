@@ -1,0 +1,35 @@
+Fibocom MHI netdev: preserve the polling weight with Linux 6.6 NAPI API.
+
+Use the device-aware random MAC helper so address storage and assignment state
+are updated together; preserve the existing address validation and fallback.
+
+References:
+https://github.com/torvalds/linux/blob/v6.6/include/linux/netdevice.h
+https://github.com/torvalds/linux/blob/v6.6/include/linux/etherdevice.h
+
+--- a/package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_netdev.c
++++ b/package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_netdev.c
+@@ -176,12 +176,12 @@
+     {
+         if (!is_valid_ether_addr(g_mhi_netdev->ndev->dev_addr))
+         {      
+-            eth_random_addr(g_mhi_netdev->ndev->dev_addr);
++            eth_hw_addr_random(g_mhi_netdev->ndev);
+             g_mhi_netdev->ndev->addr_assign_type = NET_ADDR_RANDOM;
+ 
+   	    if (!is_valid_ether_addr(g_mhi_netdev->ndev->dev_addr))
+             {
+-                eth_random_addr(g_mhi_netdev->ndev->dev_addr);
++                eth_hw_addr_random(g_mhi_netdev->ndev);
+             }
+             else
+             {
+@@ -878,7 +878,7 @@
+ 		mhi_netdev_priv->mhi_netdev = mhi_netdev;
+ 		rtnl_unlock();
+ 
+-		netif_napi_add(mhi_netdev->ndev, &mhi_netdev->napi,
++		netif_napi_add_weight(mhi_netdev->ndev, &mhi_netdev->napi,
+ 			       mhi_netdev_poll, NAPI_POLL_WEIGHT);
+ 		ret = register_netdev(mhi_netdev->ndev);
+ 		if (ret) {

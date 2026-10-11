@@ -1,0 +1,28 @@
+Quectel QMI WWAN: use the Linux 6.6 statistics reader API.
+
+Preserve the existing per-CPU counter reads and retry loop. Leave every other
+source byte unchanged, including address copies in inactive version branches.
+
+Reference:
+https://github.com/torvalds/linux/blob/v6.6/include/linux/u64_stats_sync.h
+
+--- a/package/mtk/applications/5g-modem/quectel_QMI_WWAN/src/qmi_wwan_q.c
++++ b/package/mtk/applications/5g-modem/quectel_QMI_WWAN/src/qmi_wwan_q.c
+@@ -828,7 +828,7 @@
+ 		stats64 = per_cpu_ptr(dev->stats64, cpu);
+ 
+ 		do {
+-			start = u64_stats_fetch_begin_irq(&stats64->syncp);
++			start = u64_stats_fetch_begin(&stats64->syncp);
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(5,18,0)
+ 			rx_packets = stats64->rx_packets;
+ 			rx_bytes = stats64->rx_bytes;
+@@ -840,7 +840,7 @@
+ 			tx_packets = u64_stats_read(&stats64->tx_packets);
+ 			tx_bytes = u64_stats_read(&stats64->tx_bytes);
+ #endif
+-		} while (u64_stats_fetch_retry_irq(&stats64->syncp, start));
++		} while (u64_stats_fetch_retry(&stats64->syncp, start));
+ 
+ 
+ 		stats->rx_packets += rx_packets;

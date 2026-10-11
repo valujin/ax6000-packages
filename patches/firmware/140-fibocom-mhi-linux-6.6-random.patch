@@ -1,0 +1,46 @@
+Fibocom MHI: use Linux 6.6 get_random_u32 for four sequence/session IDs.
+
+Keep every sequence mask and zero fallback unchanged; linux/random.h already
+provides the public random API. No kernel configuration or ABI changes.
+
+Reference:
+https://github.com/torvalds/linux/blob/v6.6/include/linux/random.h
+
+--- a/package/mtk/applications/5g-modem/fibocom_MHI/src/core/mhi_boot.c
++++ b/package/mtk/applications/5g-modem/fibocom_MHI/src/core/mhi_boot.c
+@@ -219,7 +219,7 @@
+ 		      lower_32_bits(mhi_buf->dma_addr));
+ 
+ 	mhi_write_reg(mhi_cntrl, base, BHIE_RXVECSIZE_OFFS, mhi_buf->len);
+-	sequence_id = prandom_u32() & BHIE_RXVECSTATUS_SEQNUM_BMSK;
++	sequence_id = get_random_u32() & BHIE_RXVECSTATUS_SEQNUM_BMSK;
+ 
+ 	if (unlikely(!sequence_id))
+ 		sequence_id = 1;
+@@ -312,7 +312,7 @@
+ 
+ 	mhi_write_reg(mhi_cntrl, base, BHIE_RXVECSIZE_OFFS, mhi_buf->len);
+ 
+-	sequence_id = prandom_u32() & BHIE_RXVECSTATUS_SEQNUM_BMSK;
++	sequence_id = get_random_u32() & BHIE_RXVECSTATUS_SEQNUM_BMSK;
+ 	mhi_write_reg_field(mhi_cntrl, base, BHIE_RXVECDB_OFFS,
+ 			    BHIE_RXVECDB_SEQNUM_BMSK, BHIE_RXVECDB_SEQNUM_SHFT,
+ 			    sequence_id);
+@@ -364,7 +364,7 @@
+ 
+ 	mhi_write_reg(mhi_cntrl, base, BHIE_TXVECSIZE_OFFS, mhi_buf->len);
+ 
+-	mhi_cntrl->sequence_id = prandom_u32() & BHIE_TXVECSTATUS_SEQNUM_BMSK;
++	mhi_cntrl->sequence_id = get_random_u32() & BHIE_TXVECSTATUS_SEQNUM_BMSK;
+ 	mhi_write_reg_field(mhi_cntrl, base, BHIE_TXVECDB_OFFS,
+ 			    BHIE_TXVECDB_SEQNUM_BMSK, BHIE_TXVECDB_SEQNUM_SHFT,
+ 			    mhi_cntrl->sequence_id);
+@@ -429,7 +429,7 @@
+ 	mhi_write_reg(mhi_cntrl, base, BHI_IMGADDR_HIGH, upper_32_bits(phys));
+ 	mhi_write_reg(mhi_cntrl, base, BHI_IMGADDR_LOW, lower_32_bits(phys));
+ 	mhi_write_reg(mhi_cntrl, base, BHI_IMGSIZE, size);
+-	mhi_cntrl->session_id = prandom_u32() & BHI_TXDB_SEQNUM_BMSK;
++	mhi_cntrl->session_id = get_random_u32() & BHI_TXDB_SEQNUM_BMSK;
+ 	mhi_write_reg(mhi_cntrl, base, BHI_IMGTXDB, mhi_cntrl->session_id);
+ 	read_unlock_bh(pm_lock);
+ 
