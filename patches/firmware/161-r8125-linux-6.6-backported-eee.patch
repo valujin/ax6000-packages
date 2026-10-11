@@ -1,0 +1,74 @@
+r8125: select the complete EEE bitmap API for the frozen Linux 6.6 backport.
+
+Pinned Padavan ec9ef10 kernel includes MediaTek 999-1703 EEE backports. Select
+existing native ethtool_keee implementations, conversions, and EEE defaults
+for this source. Preserve older EEE branches and unrelated compatibility code.
+Source archive: r8125-9.016.00.tar.bz2
+SHA256: cd1955dd07d2f5a6faaa210ffc4e8af992421295a32ab6ddcfa759bed9eba922
+Reference: https://github.com/padavanonly/immortalwrt-mt798x-6.6/tree/ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8/target/linux/mediatek/patches-6.6
+
+--- a/package/kernel/r8125/patches/110-r8125-print-link-speed-and-duplex-mode.patch
++++ b/package/kernel/r8125/patches/110-r8125-print-link-speed-and-duplex-mode.patch
+@@ -99,3 +99,62 @@
+  
+                  rtl8125_link_down_patch(dev);
+          }
++
++--- a/src/r8125_n.c
+++++ b/src/r8125_n.c
++@@ -7208,7 +7208,7 @@
++         return to_us;
++ }
++ 
++-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
++ static void
++ rtl8125_adv_to_linkmode(unsigned long *mode, u64 adv)
++ {
++@@ -7474,7 +7474,7 @@
++ 
++         return rc;
++ }
++-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0) */
++ #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0) */
++ 
++ #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
++@@ -15288,7 +15288,7 @@
++                 struct ethtool_keee *eee = &tp->eee;
++ 
++                 eee->eee_enabled = eee_enable;
++-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
++                 eee->supported  = SUPPORTED_100baseT_Full |
++                                   SUPPORTED_1000baseT_Full;
++                 eee->advertised = mmd_eee_adv_to_ethtool_adv_t(MDIO_EEE_1000T | MDIO_EEE_100TX);
++@@ -15321,7 +15321,7 @@
++                         }
++                         break;
++                 }
++-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0) */
++                 eee->tx_lpi_enabled = eee_enable;
++                 eee->tx_lpi_timer = dev->mtu + ETH_HLEN + 0x20;
++         }
++--- a/src/r8125.h
+++++ b/src/r8125.h
++@@ -488,7 +488,7 @@
++ #define  MDIO_EEE_2_5GT  0x0001
++ #endif
++ 
++-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
++ #define ethtool_keee ethtool_eee
++ #define rtl8125_ethtool_adv_to_mmd_eee_adv_cap1_t ethtool_adv_to_mmd_eee_adv_t
++ static inline u32 rtl8125_ethtool_adv_to_mmd_eee_adv_cap2_t(u32 adv)
++@@ -503,7 +503,7 @@
++ #else
++ #define rtl8125_ethtool_adv_to_mmd_eee_adv_cap1_t linkmode_to_mii_eee_cap1_t
++ #define rtl8125_ethtool_adv_to_mmd_eee_adv_cap2_t linkmode_to_mii_eee_cap2_t
++-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0) */
++ 
++ #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29)
++ #ifdef CONFIG_NET_POLL_CONTROLLER

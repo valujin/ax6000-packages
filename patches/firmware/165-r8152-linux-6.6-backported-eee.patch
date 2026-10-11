@@ -1,0 +1,46 @@
+r8152: select the complete EEE bitmap API for the frozen Linux 6.6 backport.
+
+Pinned Padavan ec9ef10 kernel includes MediaTek 999-1703 EEE backports. Select
+existing native ethtool_keee implementations, conversions, and EEE defaults
+for this source. Preserve older EEE branches and unrelated compatibility code.
+Source archive: r8152-2.19.2.tar.gz
+SHA256: 03f9a558ebf90d7cd121150f942395be4b96a5d11059fd0d0517db2574731189
+Reference: https://github.com/padavanonly/immortalwrt-mt798x-6.6/tree/ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8/target/linux/mediatek/patches-6.6
+
+diff --git a/package/kernel/r8152/patches/110-linux-6.6-backported-eee.patch b/package/kernel/r8152/patches/110-linux-6.6-backported-eee.patch
+new file mode 100644
+--- /dev/null
++++ b/package/kernel/r8152/patches/110-linux-6.6-backported-eee.patch
+@@ -0,0 +1,32 @@
++--- a/r8152.c
+++++ b/r8152.c
++@@ -24677,7 +24677,7 @@
++ }
++ 
++ #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)
++-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
++ static int r8152_get_eee(struct r8152 *tp, struct ethtool_keee *eee)
++ {
++ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(common);
++@@ -24869,7 +24869,7 @@
++ {
++ 	return r8152_set_eee(tp, eee);
++ }
++-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0) */
++ 
++ static int
++ rtl_ethtool_get_eee(struct net_device *net, struct ethtool_keee *edata)
++--- a/compatibility.h
+++++ b/compatibility.h
++@@ -22,7 +22,9 @@
++ #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,31) */
++ 
++ #if LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
++ 	#define ethtool_keee ethtool_eee
+++#endif /* EEE bitmap backport in this Linux 6.6 source */
++ #if LINUX_VERSION_CODE < KERNEL_VERSION(5,19,0)
++ 	#define TSO_LEGACY_MAX_SIZE		65536
++ 	#define netif_napi_add_weight		netif_napi_add

@@ -22,7 +22,9 @@ def vendor_source_fixture(source):
     """GPL driver files from pinned ec9ef10; no full source checkout."""
     manifest = json.loads((ROOT / 'patches/firmware/manifest.json').read_text())
     for spec in manifest['patches']:
-        fixture = Path(spec['path']).name.replace('_', '-') + '.gz'
+        if spec.get('operation') == 'add':
+            continue
+        fixture = spec.get('fixture', Path(spec['path']).name.replace('_', '-') + '.gz')
         before = gzip.decompress((ROOT / 'tests/fixtures' / fixture).read_bytes())
         if hashlib.sha256(before).hexdigest() != spec['before_sha256']:
             raise ValueError('pinned driver fixture has another source hash')
@@ -81,6 +83,59 @@ class FirmwarePatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'patch hash'):
             firmware.apply_source_patch(self.source, self.spec, self.patch)
         self.assertEqual(self.target.read_bytes(), self.before)
+
+    def add_patch_fixture(self):
+        self.target.unlink()
+        self.patch.write_text('diff --git a/driver.c b/driver.c\nnew file mode 100644\n'
+                              '--- /dev/null\n+++ b/driver.c\n@@ -0,0 +1,3 @@\n'
+                              '+int map(void) {\n'
+                              '+\treturn iommu_map(domain, addr, addr, size, prot, GFP_KERNEL);\n'
+                              '+}\n')
+        self.spec.update(operation='add', before_sha256=None,
+                         sha256=hashlib.sha256(self.patch.read_bytes()).hexdigest())
+
+    def test_new_patch_file_requires_apply_and_is_idempotent_without_config_changes(self):
+        self.add_patch_fixture()
+        config = (self.source / '.config').read_bytes()
+        with self.assertRaisesRegex(ValueError, 'not applied'):
+            firmware.apply_source_patch(self.source, self.spec, self.patch, check_only=True)
+        firmware.apply_source_patch(self.source, self.spec, self.patch)
+        self.assertEqual(self.target.read_bytes(), self.after)
+        firmware.apply_source_patch(self.source, self.spec, self.patch)
+        firmware.apply_source_patch(self.source, self.spec, self.patch, check_only=True)
+        self.assertEqual((self.source / '.config').read_bytes(), config)
+
+    def test_new_patch_file_refuses_unexpected_existing_file(self):
+        self.add_patch_fixture()
+        self.target.write_bytes(b'foreign patch\n')
+        with self.assertRaisesRegex(ValueError, 'source hash'):
+            firmware.apply_source_patch(self.source, self.spec, self.patch)
+        self.assertEqual(self.target.read_bytes(), b'foreign patch\n')
+
+    def test_new_patch_file_refuses_symlink_target_and_parent(self):
+        self.add_patch_fixture()
+        self.target.symlink_to(self.source / 'missing')
+        with self.assertRaisesRegex(ValueError, 'outside source|symlink'):
+            firmware.apply_source_patch(self.source, self.spec, self.patch)
+        self.target.unlink()
+        directory = self.source / 'real'
+        directory.mkdir()
+        (self.source / 'linked').symlink_to(directory, target_is_directory=True)
+        self.spec['path'] = 'linked/driver.c'
+        with self.assertRaisesRegex(ValueError, 'outside source|symlink'):
+            firmware.apply_source_patch(self.source, self.spec, self.patch)
+        self.assertFalse((directory / 'driver.c').exists())
+
+    def test_new_patch_file_refuses_path_escape_and_nonnull_before_hash(self):
+        self.add_patch_fixture()
+        self.spec['path'] = '../driver.c'
+        with self.assertRaisesRegex(ValueError, 'outside source'):
+            firmware.apply_source_patch(self.source, self.spec, self.patch)
+        self.spec['path'] = 'driver.c'
+        self.spec['before_sha256'] = hashlib.sha256(self.before).hexdigest()
+        with self.assertRaisesRegex(ValueError, 'before hash'):
+            firmware.apply_source_patch(self.source, self.spec, self.patch)
+        self.assertFalse(self.target.exists())
 
     def test_vendor_fix_refuses_another_kernel_series(self):
         target = self.source / 'target/linux/mediatek/Makefile'
@@ -244,6 +299,68 @@ class FirmwarePatchTests(unittest.TestCase):
                            'linkmode_to_mii_eee_cap1_t(eee->advertised)']:
             self.assertIn(conversion, bitmap_branch)
         self.assertIn('rtl_ethtool_get_eee(struct net_device *net, struct ethtool_eee *eee)', text)
+
+    def test_selected_realtek_package_patches_keep_existing_patches_and_eee_bodies(self):
+        manifest = vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        metadata = json.loads((ROOT / 'tests/fixtures/realtek-eee-sources.json').read_text())
+        for package in metadata:
+            with self.subTest(package=package['name']):
+                spec = next(s for s in manifest['patches'] if s['patch'] == package['spec'])
+                augmented = self.source / spec['path']
+                previous = next((p for p in package['original_patches']
+                                 if p['name'] == package['augmented_patch']), None)
+                if previous:
+                    original = gzip.decompress((ROOT / 'tests/fixtures' / previous['fixture']).read_bytes())
+                    self.assertTrue(augmented.read_bytes().startswith(original))
+                else:
+                    self.assertEqual(spec['operation'], 'add')
+                    self.assertIsNone(spec['before_sha256'])
+                outputs = []
+                for version in ['before', 'after']:
+                    driver = self.source / (package['name'] + '-' + version)
+                    for path, data in package['sources'].items():
+                        original = gzip.decompress((ROOT / 'tests/fixtures' / data['fixture']).read_bytes())
+                        self.assertEqual(hashlib.sha256(original).hexdigest(), data['sha256'])
+                        target = driver / path
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(original)
+                    patches = {}
+                    for old in package['original_patches']:
+                        path = self.source / (package['name'] + '-' + old['name'])
+                        path.write_bytes(gzip.decompress((ROOT / 'tests/fixtures' / old['fixture']).read_bytes()))
+                        patches[old['name']] = path
+                    if version == 'after':
+                        patches[package['augmented_patch']] = augmented
+                    for _, path in sorted(patches.items()):
+                        result = subprocess.run(['patch', '--batch', '-p1', '-i', str(path)], cwd=driver,
+                                                text=True, capture_output=True)
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    outputs.append({path: (driver / path).read_bytes() for path in package['sources']})
+                before, after = outputs
+                for path, original in before.items():
+                    if package['name'] == 'r8152' and path == 'compatibility.h':
+                        needle = b'\t#define ethtool_keee ethtool_eee\n'
+                        expected = original.replace(needle,
+                            b'#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)\n' + needle +
+                            b'#endif /* EEE bitmap backport in this Linux 6.6 source */\n')
+                        self.assertEqual(after[path].count(b'KERNEL_VERSION(6,9,0)'), 2,
+                                         'unrelated outer compatibility guard must remain intact')
+                    else:
+                        expected = original.replace(b'KERNEL_VERSION(6,9,0)', b'KERNEL_VERSION(6,6,0)')
+                    self.assertEqual(after[path], expected,
+                                     'implementation bodies and original package fixes must remain unchanged')
+                c_path = 'r8152.c' if package['name'] == 'r8152' else 'src/' + package['name'] + '_n.c'
+                header_path = 'compatibility.h' if package['name'] == 'r8152' else 'src/' + package['name'] + '.h'
+                text = after[c_path].decode()
+                self.assertRegex(text, r'#if LINUX_VERSION_CODE >= KERNEL_VERSION\(6,6,0\)')
+                self.assertIn('struct ethtool_keee *', text)
+                self.assertIn('mii_eee_cap1_mod_linkmode_t(', text)
+                self.assertIn('linkmode_and(', text)
+                self.assertIn('#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)', after[header_path].decode())
+                if package['name'] != 'r8152':
+                    self.assertIn('linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT, eee->supported)', text)
 
     def test_gobi_and_qmi_use_native_linux66_network_apis(self):
         vendor_source_fixture(self.source)

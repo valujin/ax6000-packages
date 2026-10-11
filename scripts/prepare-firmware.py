@@ -77,17 +77,29 @@ def set_symbols(config, values):
 
 def apply_source_patch(source, spec, patch, check_only=False):
     """Apply only the reviewed source revision; an exact patched file is idempotent."""
-    target = source / spec["path"]
-    prepare.require(target.is_file() and not target.is_symlink()
-                    and target.resolve().is_relative_to(source.resolve()),
+    relative = Path(spec["path"])
+    target = source / relative
+    prepare.require(not relative.is_absolute() and ".." not in relative.parts
+                    and target.resolve().is_relative_to(source.resolve())
+                    and not target.is_symlink()
+                    and not any(parent.is_symlink() for parent in target.parents
+                                if parent != source and parent.is_relative_to(source)),
                     f"vendor patch target is absent or outside source: {spec['path']}")
+    operation = spec.get("operation", "modify")
+    prepare.require(operation in {"modify", "add"}, "vendor patch operation is unsupported")
+    if operation == "add":
+        prepare.require(spec["before_sha256"] is None, "new vendor patch requires a null before hash")
+    else:
+        prepare.require(target.is_file(), f"vendor patch target is absent or outside source: {spec['path']}")
     prepare.require(hashlib.sha256(patch.read_bytes()).hexdigest() == spec["sha256"],
                     f"vendor patch hash differs: {spec['patch']}")
-    digest = hashlib.sha256(target.read_bytes()).hexdigest()
-    if digest == spec["after_sha256"]:
-        return
-    prepare.require(digest == spec["before_sha256"],
-                    f"vendor patch source hash differs: {spec['path']}")
+    if target.exists():
+        prepare.require(target.is_file(), f"vendor patch source hash differs: {spec['path']}")
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        if digest == spec["after_sha256"]:
+            return
+        prepare.require(operation == "modify" and digest == spec["before_sha256"],
+                        f"vendor patch source hash differs: {spec['path']}")
     prepare.require(not check_only, f"required vendor patch is not applied: {spec['patch']}")
     command = ["git", "apply", "--whitespace=nowarn"]
     subprocess.run(command + ["--check", str(patch.resolve())], cwd=source, check=True)

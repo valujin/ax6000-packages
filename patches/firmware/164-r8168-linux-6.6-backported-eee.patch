@@ -1,0 +1,71 @@
+r8168: select the complete EEE bitmap API for the frozen Linux 6.6 backport.
+
+Pinned Padavan ec9ef10 kernel includes MediaTek 999-1703 EEE backports. Select
+existing native ethtool_keee implementations, conversions, and EEE defaults
+for this source. Preserve older EEE branches and unrelated compatibility code.
+Source archive: r8168-8.055.00.tar.bz2
+SHA256: 61deb2a9cb7d6b08748ad51734b108da95d629712b64b204e2e6bd3f16d0a48f
+Reference: https://github.com/padavanonly/immortalwrt-mt798x-6.6/tree/ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8/target/linux/mediatek/patches-6.6
+
+--- a/package/kernel/r8168/patches/110-r8168-print-link-speed-and-duplex-mode.patch
++++ b/package/kernel/r8168/patches/110-r8168-print-link-speed-and-duplex-mode.patch
+@@ -98,3 +98,59 @@
+  
+                          rtl8168_link_down_patch(dev);
+                  }
++
++--- a/src/r8168_n.c
+++++ b/src/r8168_n.c
++@@ -7981,7 +7981,7 @@
++         return to_us;
++ }
++ 
++-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
++ static void
++ rtl8168_adv_to_linkmode(unsigned long *mode, u64 adv)
++ {
++@@ -8204,7 +8204,7 @@
++ out:
++         return rc;
++ }
++-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0) */
++ #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0) */
++ 
++ #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
++@@ -26835,7 +26835,7 @@
++                 struct ethtool_keee *eee = &tp->eee;
++ 
++                 eee->eee_enabled = eee_enable;
++-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
++                 eee->supported  = SUPPORTED_100baseT_Full |
++                                   SUPPORTED_1000baseT_Full;
++                 eee->advertised = mmd_eee_adv_to_ethtool_adv_t(MDIO_EEE_1000T | MDIO_EEE_100TX);
++@@ -26844,7 +26844,7 @@
++                 linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, eee->supported);
++                 linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT, eee->advertised);
++                 linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, eee->advertised);
++-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0) */
++                 eee->tx_lpi_enabled = eee_enable;
++                 eee->tx_lpi_timer = dev->mtu + ETH_HLEN + 0x20;
++         }
++--- a/src/r8168.h
+++++ b/src/r8168.h
++@@ -423,12 +423,12 @@
++ #define  MDIO_EEE_1000T  0x0004
++ #endif
++ 
++-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
++ #define ethtool_keee ethtool_eee
++ #define rtl8168_ethtool_adv_to_mmd_eee_adv_cap1_t ethtool_adv_to_mmd_eee_adv_t
++ #else
++ #define rtl8168_ethtool_adv_to_mmd_eee_adv_cap1_t linkmode_to_mii_eee_cap1_t
++-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0) */
++ 
++ #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29)
++ #ifdef CONFIG_NET_POLL_CONTROLLER

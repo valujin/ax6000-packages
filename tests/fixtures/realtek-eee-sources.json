@@ -1,0 +1,141 @@
+[
+  {
+    "name": "r8125",
+    "spec": "161-r8125-linux-6.6-backported-eee.patch",
+    "archive": "r8125-9.016.00.tar.bz2",
+    "archive_sha256": "cd1955dd07d2f5a6faaa210ffc4e8af992421295a32ab6ddcfa759bed9eba922",
+    "sources": {
+      "src/r8125_n.c": {
+        "fixture": "r8125-original-r8125-n.c.gz",
+        "sha256": "a541c64e1f385376eebec03c34f0712367fc3b647bca866f91dde262a23cbe2c"
+      },
+      "src/r8125.h": {
+        "fixture": "r8125-original-r8125.h.gz",
+        "sha256": "dfc1cad6d5dea93beda49d4a450592156b1449f9aea78e7f3137d21021fb29a7"
+      }
+    },
+    "original_patches": [
+      {
+        "name": "110-r8125-print-link-speed-and-duplex-mode.patch",
+        "fixture": "r8125-110-r8125-print-link-speed-and-duplex-mode.patch.gz"
+      },
+      {
+        "name": "120-add-LED-configuration-from-OF.patch",
+        "fixture": "r8125-120-add-LED-configuration-from-OF.patch.gz"
+      },
+      {
+        "name": "130-add-devname-configuration-from-OF.patch",
+        "fixture": "r8125-130-add-devname-configuration-from-OF.patch.gz"
+      }
+    ],
+    "augmented_patch": "110-r8125-print-link-speed-and-duplex-mode.patch"
+  },
+  {
+    "name": "r8126",
+    "spec": "162-r8126-linux-6.6-backported-eee.patch",
+    "archive": "r8126-10.015.00.tar.bz2",
+    "archive_sha256": "fac513aa925264a95b053e7532fcda56022d29db288f6625fafee2759a8a6124",
+    "sources": {
+      "src/r8126_n.c": {
+        "fixture": "r8126-original-r8126-n.c.gz",
+        "sha256": "0e3496ca627559901f11b899bafdda092e38a3c97e92ce3c5617615a29ec3334"
+      },
+      "src/r8126.h": {
+        "fixture": "r8126-original-r8126.h.gz",
+        "sha256": "0e5a1bfd088c166ee6d8814dd59990873dfd71d9ba52ba19c33f674f007e63c5"
+      }
+    },
+    "original_patches": [
+      {
+        "name": "110-r8126-print-link-speed-and-duplex-mode.patch",
+        "fixture": "r8126-110-r8126-print-link-speed-and-duplex-mode.patch.gz"
+      },
+      {
+        "name": "120-add-LED-configuration-from-OF.patch",
+        "fixture": "r8126-120-add-LED-configuration-from-OF.patch.gz"
+      },
+      {
+        "name": "130-add-devname-configuration-from-OF.patch",
+        "fixture": "r8126-130-add-devname-configuration-from-OF.patch.gz"
+      }
+    ],
+    "augmented_patch": "110-r8126-print-link-speed-and-duplex-mode.patch"
+  },
+  {
+    "name": "r8127",
+    "spec": "163-r8127-linux-6.6-backported-eee.patch",
+    "archive": "r8127-11.014.00.tar.bz2",
+    "archive_sha256": "f496bc16c32d2e8f9482c57d006604c70d9e8d55b4f1f999b88c602de9104094",
+    "sources": {
+      "src/r8127_n.c": {
+        "fixture": "r8127-original-r8127-n.c.gz",
+        "sha256": "4aa0c2501ab6d71d42dbddafbce201ee5090d49fb8ab220c88965a888936e60f"
+      },
+      "src/r8127.h": {
+        "fixture": "r8127-original-r8127.h.gz",
+        "sha256": "a696c126d5c3d416f80404c6a167364ee83751b0c685ee468d118e845cfe8268"
+      }
+    },
+    "original_patches": [
+      {
+        "name": "200-r8127-print-link-speed-and-duplex-mode.patch",
+        "fixture": "r8127-200-r8127-print-link-speed-and-duplex-mode.patch.gz"
+      }
+    ],
+    "augmented_patch": "200-r8127-print-link-speed-and-duplex-mode.patch"
+  },
+  {
+    "name": "r8168",
+    "spec": "164-r8168-linux-6.6-backported-eee.patch",
+    "archive": "r8168-8.055.00.tar.bz2",
+    "archive_sha256": "61deb2a9cb7d6b08748ad51734b108da95d629712b64b204e2e6bd3f16d0a48f",
+    "sources": {
+      "src/r8168_n.c": {
+        "fixture": "r8168-original-r8168-n.c.gz",
+        "sha256": "de90f665f62cb304ecc43444376c4eba417d3443ad77d10ae15658547c11eeeb"
+      },
+      "src/r8168.h": {
+        "fixture": "r8168-original-r8168.h.gz",
+        "sha256": "e2aaecb1b8250ba31ea1e7eb22ba599183bce882341bc5a8dba0fab6cc28282c"
+      }
+    },
+    "original_patches": [
+      {
+        "name": "001-r8168_n-fix-proc_dump_rx_desc_2-on-32-bits.patch",
+        "fixture": "r8168-001-r8168_n-fix-proc_dump_rx_desc_2-on-32-bits.patch.gz"
+      },
+      {
+        "name": "110-r8168-print-link-speed-and-duplex-mode.patch",
+        "fixture": "r8168-110-r8168-print-link-speed-and-duplex-mode.patch.gz"
+      },
+      {
+        "name": "120-r8168-add-LED-configuration-from-OF.patch",
+        "fixture": "r8168-120-r8168-add-LED-configuration-from-OF.patch.gz"
+      }
+    ],
+    "augmented_patch": "110-r8168-print-link-speed-and-duplex-mode.patch"
+  },
+  {
+    "name": "r8152",
+    "spec": "165-r8152-linux-6.6-backported-eee.patch",
+    "archive": "r8152-2.19.2.tar.gz",
+    "archive_sha256": "03f9a558ebf90d7cd121150f942395be4b96a5d11059fd0d0517db2574731189",
+    "sources": {
+      "r8152.c": {
+        "fixture": "r8152-original-r8152.c.gz",
+        "sha256": "6a10b31d7d2a4616572aba392823599923a22e95ec7405abdb59e5e2d138fdd7"
+      },
+      "compatibility.h": {
+        "fixture": "r8152-original-compatibility.h.gz",
+        "sha256": "12b2d6ed1a713e2b0cd291511a9709779ed5de16febe37c48c970af8947e6daf"
+      }
+    },
+    "original_patches": [
+      {
+        "name": "100-add-LED-configuration-from-OF.patch",
+        "fixture": "r8152-100-add-LED-configuration-from-OF.patch.gz"
+      }
+    ],
+    "augmented_patch": "110-linux-6.6-backported-eee.patch"
+  }
+]

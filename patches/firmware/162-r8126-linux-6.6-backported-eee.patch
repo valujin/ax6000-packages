@@ -1,0 +1,74 @@
+r8126: select the complete EEE bitmap API for the frozen Linux 6.6 backport.
+
+Pinned Padavan ec9ef10 kernel includes MediaTek 999-1703 EEE backports. Select
+existing native ethtool_keee implementations, conversions, and EEE defaults
+for this source. Preserve older EEE branches and unrelated compatibility code.
+Source archive: r8126-10.015.00.tar.bz2
+SHA256: fac513aa925264a95b053e7532fcda56022d29db288f6625fafee2759a8a6124
+Reference: https://github.com/padavanonly/immortalwrt-mt798x-6.6/tree/ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8/target/linux/mediatek/patches-6.6
+
+--- a/package/kernel/r8126/patches/110-r8126-print-link-speed-and-duplex-mode.patch
++++ b/package/kernel/r8126/patches/110-r8126-print-link-speed-and-duplex-mode.patch
+@@ -102,3 +102,62 @@
+  
+                  rtl8126_link_down_patch(dev);
+          }
++
++--- a/src/r8126_n.c
+++++ b/src/r8126_n.c
++@@ -6770,7 +6770,7 @@
++         return to_us;
++ }
++ 
++-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
++ static void
++ rtl8126_adv_to_linkmode(unsigned long *mode, u64 adv)
++ {
++@@ -7014,7 +7014,7 @@
++ out:
++         return rc;
++ }
++-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0) */
++ #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0) */
++ 
++ #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
++@@ -12165,7 +12165,7 @@
++                 struct ethtool_keee *eee = &tp->eee;
++ 
++                 eee->eee_enabled = eee_enable;
++-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
++                 eee->supported  = SUPPORTED_100baseT_Full |
++                                   SUPPORTED_1000baseT_Full |
++                                   SUPPORTED_2500baseX_Full;
++@@ -12180,7 +12180,7 @@
++                 linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, eee->advertised);
++                 linkmode_set_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, eee->advertised);
++                 linkmode_set_bit(ETHTOOL_LINK_MODE_5000baseT_Full_BIT, eee->advertised);
++-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0) */
++                 eee->tx_lpi_enabled = eee_enable;
++                 eee->tx_lpi_timer = dev->mtu + ETH_HLEN + 0x20;
++         }
++--- a/src/r8126.h
+++++ b/src/r8126.h
++@@ -520,7 +520,7 @@
++ #define  MDIO_EEE_5GT  0x0002
++ #endif
++ 
++-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
++ #define ethtool_keee ethtool_eee
++ #define rtl8126_ethtool_adv_to_mmd_eee_adv_cap1_t ethtool_adv_to_mmd_eee_adv_t
++ static inline u32 rtl8126_ethtool_adv_to_mmd_eee_adv_cap2_t(u32 adv)
++@@ -535,7 +535,7 @@
++ #else
++ #define rtl8126_ethtool_adv_to_mmd_eee_adv_cap1_t linkmode_to_mii_eee_cap1_t
++ #define rtl8126_ethtool_adv_to_mmd_eee_adv_cap2_t linkmode_to_mii_eee_cap2_t
++-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0) */
++ 
++ #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29)
++ #ifdef CONFIG_NET_POLL_CONTROLLER

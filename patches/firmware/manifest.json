@@ -121,6 +121,46 @@
       "sha256": "14bdba8e53898570c4ed5faaa1c9d34538bd56b7db0bc620e6c95bbcc3d603a3",
       "before_sha256": "5fe6a068d57b4af5c1c18d56d567ca655c6c044e004991db3561ab8923fe4c00",
       "after_sha256": "e50ade90faf8733cf7ed0d7977cf3008462e0be950f50b04535dac495092e5ed"
+    },
+    {
+      "patch": "161-r8125-linux-6.6-backported-eee.patch",
+      "path": "package/kernel/r8125/patches/110-r8125-print-link-speed-and-duplex-mode.patch",
+      "sha256": "3805b4e84bc069de98fb169399437bbdeb40ca852480851972f78dd0b9bb0add",
+      "before_sha256": "cc9b60835caf21162f06df51b04804c4d033936c65eb44934f87546193740f8a",
+      "after_sha256": "19b7496259254935e2007e07077d7e8eb36ab2341f6b4f5001a8f964ed9ab8fd",
+      "fixture": "r8125-110-r8125-print-link-speed-and-duplex-mode.patch.gz"
+    },
+    {
+      "patch": "162-r8126-linux-6.6-backported-eee.patch",
+      "path": "package/kernel/r8126/patches/110-r8126-print-link-speed-and-duplex-mode.patch",
+      "sha256": "8f49244e99f5522703fa4158b0b11ed68f84caa810b82e8639e6b601846cf16f",
+      "before_sha256": "b95634b60936c6a5c699758b6138c6fda57ccc9d7433c7d9a0dec0e01e036605",
+      "after_sha256": "cfa13a839aa911b07fd253aa8c71ced4f765517e86dcc5dee97474eb4abddd29",
+      "fixture": "r8126-110-r8126-print-link-speed-and-duplex-mode.patch.gz"
+    },
+    {
+      "patch": "163-r8127-linux-6.6-backported-eee.patch",
+      "path": "package/kernel/r8127/patches/200-r8127-print-link-speed-and-duplex-mode.patch",
+      "sha256": "77cfdd2fa584f32c6399c253080523eb9c4238c8f42144c67b6d8ed99c09e4a0",
+      "before_sha256": "906f66426d67573e4a6b102042989c96885e15125bcadb562eb45ce2c0ecfc37",
+      "after_sha256": "a94f3cfdf92b58c8c1c7265f4d8a892b6a23f09167950a8350ae03f800b4a40b",
+      "fixture": "r8127-200-r8127-print-link-speed-and-duplex-mode.patch.gz"
+    },
+    {
+      "patch": "164-r8168-linux-6.6-backported-eee.patch",
+      "path": "package/kernel/r8168/patches/110-r8168-print-link-speed-and-duplex-mode.patch",
+      "sha256": "693a7faf4a2e8f28ff52c3ba941c8b56abe7182d46746ba50feca948d4188846",
+      "before_sha256": "789ce64f320e369bd0d8223b77437918c41688ea25e61f1445cda8ba1e26425a",
+      "after_sha256": "a0fd88b10ca67468c54d3b2a8e7fe3db2f52b859f38902eca7ca1f82f8ed2c06",
+      "fixture": "r8168-110-r8168-print-link-speed-and-duplex-mode.patch.gz"
+    },
+    {
+      "patch": "165-r8152-linux-6.6-backported-eee.patch",
+      "path": "package/kernel/r8152/patches/110-linux-6.6-backported-eee.patch",
+      "sha256": "9377359d3d4ff1d8b9f6afa941ccbcc411de5242693e6c777fc473205ad793c8",
+      "before_sha256": null,
+      "after_sha256": "22bd89ce5959608b8f5283bdc0d21acc17d6f8472fac70364daa68ad6d05a12c",
+      "operation": "add"
     }
   ]
 }
