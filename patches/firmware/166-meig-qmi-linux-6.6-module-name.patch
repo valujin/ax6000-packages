@@ -1,0 +1,15 @@
+Meig QMI: preserve qmi_wwan_m module identity with the supplied qmi_wwan.c.
+
+Replace the unrelated GobiNet object declaration with a composite module
+object list; keep obj-m, package FILES, and AUTOLOAD unchanged.
+Reference: https://www.kernel.org/doc/html/v6.6/kbuild/modules.html
+
+--- a/package/mtk/applications/5g-modem/meig_QMI_WWAN/src/Makefile
++++ b/package/mtk/applications/5g-modem/meig_QMI_WWAN/src/Makefile
+@@ -1,5 +1,5 @@
+ obj-m := qmi_wwan_m.o
+-GobiNet-objs := qmi_wwan_m.o
++qmi_wwan_m-y := qmi_wwan.o
+ 
+ PWD := $(shell pwd)
+ OUTPUTDIR=/lib/modules/`uname -r`/kernel/drivers/net/usb/

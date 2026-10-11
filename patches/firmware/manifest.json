@@ -161,6 +161,22 @@
       "before_sha256": null,
       "after_sha256": "22bd89ce5959608b8f5283bdc0d21acc17d6f8472fac70364daa68ad6d05a12c",
       "operation": "add"
+    },
+    {
+      "patch": "166-meig-qmi-linux-6.6-module-name.patch",
+      "path": "package/mtk/applications/5g-modem/meig_QMI_WWAN/src/Makefile",
+      "sha256": "511a89f0e6ee0594f521c6843ed6466313647f8b862f05bd72d5f717ee059f6d",
+      "before_sha256": "570e346edc56de706c718e31263e225474903da7bfafa081ce8466ea8aa51d84",
+      "after_sha256": "b337fc5b7ad2fedb65f601dcc70ea58116a4aa966ce219794f2e308cd1790c51",
+      "fixture": "meig-qmi-Makefile.gz"
+    },
+    {
+      "patch": "167-meig-qmi-linux-6.6-mac-address.patch",
+      "path": "package/mtk/applications/5g-modem/meig_QMI_WWAN/src/qmi_wwan.c",
+      "sha256": "9761a3deb5f0cb696512131f6654b101b34cc2e303a91a8a7d1aa7d07ce17454",
+      "before_sha256": "e70e7e21b1b6e4b951528605964b7ff925f567512c50f8d298bfc977ac2a0d6d",
+      "after_sha256": "77617b3c834a476829a380ed6c3c5ff0b6ad08701405cee3a6fc7596cf1586c1",
+      "fixture": "meig-qmi-qmi-wwan.c.gz"
     }
   ]
 }

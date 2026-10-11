@@ -1,0 +1,24 @@
+Meig QMI: update the MAC through Linux 6.6 address-state helpers.
+
+Keep the possibly_iphdr condition and both original bit operations. Copy
+six bytes locally and set the address through eth_hw_addr_set instead of
+writing the const dev_addr storage directly.
+Reference: https://github.com/torvalds/linux/blob/v6.6/include/linux/etherdevice.h
+
+--- a/package/mtk/applications/5g-modem/meig_QMI_WWAN/src/qmi_wwan.c
++++ b/package/mtk/applications/5g-modem/meig_QMI_WWAN/src/qmi_wwan.c
+@@ -368,8 +368,12 @@
+ 
+ 	/* make MAC addr easily distinguishable from an IP header */
+ 	if (possibly_iphdr(dev->net->dev_addr)) {
+-		dev->net->dev_addr[0] |= 0x02;	/* set local assignment bit */
+-		dev->net->dev_addr[0] &= 0xbf;	/* clear "IP" bit */
++		u8 addr[ETH_ALEN];
++
++		ether_addr_copy(addr, dev->net->dev_addr);
++		addr[0] |= 0x02;	/* set local assignment bit */
++		addr[0] &= 0xbf;	/* clear "IP" bit */
++		eth_hw_addr_set(dev->net, addr);
+ 	}
+ 	dev->net->netdev_ops = &qmi_wwan_netdev_ops;
+ 

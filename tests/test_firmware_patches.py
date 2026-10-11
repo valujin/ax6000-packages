@@ -362,6 +362,41 @@ class FirmwarePatchTests(unittest.TestCase):
                 if package['name'] != 'r8152':
                     self.assertIn('linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT, eee->supported)', text)
 
+    def test_meig_composite_module_preserves_packaged_name_and_uses_existing_source(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        base = self.source / 'package/mtk/applications/5g-modem/meig_QMI_WWAN/src'
+        before = gzip.decompress((ROOT / 'tests/fixtures/meig-qmi-Makefile.gz').read_bytes())
+        after = (base / 'Makefile').read_bytes()
+        self.assertEqual(after.replace(b'qmi_wwan_m-y := qmi_wwan.o', b'GobiNet-objs := qmi_wwan_m.o'), before)
+        self.assertIn(b'obj-m := qmi_wwan_m.o\n', after)
+        self.assertIn(b'cp -f qmi_wwan_m.ko $(OUTPUTDIR)', after)
+        self.assertTrue((base / 'qmi_wwan.c').is_file(), 'composite object must map to an existing source')
+        self.assertFalse((base / 'qmi_wwan_m.c').exists())
+
+    def test_meig_mac_update_preserves_condition_bits_and_other_driver_bytes(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        target = self.source / 'package/mtk/applications/5g-modem/meig_QMI_WWAN/src/qmi_wwan.c'
+        original = gzip.decompress((ROOT / 'tests/fixtures/meig-qmi-qmi-wwan.c.gz').read_bytes()).decode()
+        patched = target.read_text()
+        old_block = re.search(r'\tif \(possibly_iphdr\(dev->net->dev_addr\)\) \{\n.*?\n\t\}', original, re.S).group()
+        new_block = re.search(r'\tif \(possibly_iphdr\(dev->net->dev_addr\)\) \{\n.*?\n\t\}', patched, re.S).group()
+        self.assertEqual(patched.replace(new_block, old_block), original)
+        self.assertIn('u8 addr[ETH_ALEN];', new_block)
+        self.assertIn('ether_addr_copy(addr, dev->net->dev_addr);', new_block)
+        self.assertIn('eth_hw_addr_set(dev->net, addr);', new_block)
+        self.assertNotRegex(new_block, r'dev->net->dev_addr\[\d+\]\s*[|&]?=')
+        old_masks = tuple(int(re.search(op + r'=\s*(0x[0-9a-f]+)', old_block).group(1), 16)
+                          for op in [r'\|', '&'])
+        new_masks = tuple(int(re.search(op + r'=\s*(0x[0-9a-f]+)', new_block).group(1), 16)
+                          for op in [r'\|', '&'])
+        for first_byte in range(256):
+            self.assertEqual((first_byte | old_masks[0]) & old_masks[1],
+                             (first_byte | new_masks[0]) & new_masks[1])
+
     def test_gobi_and_qmi_use_native_linux66_network_apis(self):
         vendor_source_fixture(self.source)
         profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
