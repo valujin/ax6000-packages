@@ -185,6 +185,17 @@ jobs:
           unset OPKG_SIGNING_KEY
           python3 scripts/publish.py --profile "$PROFILE" --input raw \
             --output public --key "$key" --usign raw/usign --lock state/lock.json
+      - name: Enforce the complete Pages site size limit
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          size = sum(path.stat().st_size for path in Path('public').rglob('*') if path.is_file())
+          if size > 1_000_000_000:
+              raise SystemExit(f'Complete Pages site is {size} bytes, exceeding the 1 GB limit. '
+                               'The last successful deployment remains unchanged.')
+          print(f'Complete Pages site: {size} bytes')
+          PY
       - name: Prepare Pages
         uses: actions/configure-pages@v5
       - name: Upload complete repository
