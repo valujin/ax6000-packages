@@ -249,7 +249,7 @@ def export(profile, lock, source, output):
     generated = copy.deepcopy(profile)
     generated["firmware"]["kernel_version"] = abi
     augment_sdk(profile, source, sdks[0], controls, abi)
-    # Daily SDK rebuilds keep the kernel configuration fixed and reuse the frozen core modules.
+    # Daily SDK builds keep the kernel configuration fixed and reuse frozen modules.
     generated["all_kmods"] = False
     generated["feeds"].insert(0, {"name": "base", "url": profile["firmware"]["repository"],
                                   "commit": profile["firmware"]["commit"]})
