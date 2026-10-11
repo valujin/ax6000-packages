@@ -114,6 +114,13 @@
       "sha256": "133815d0b9fae840322550779f379b71dc2b6ea9be85ab6edbdc3551049b2f78",
       "before_sha256": "bf5e0d58b1c1bbcaaa56779f18c061ee47df41e8e52a0b723930244bca8e916d",
       "after_sha256": "a990297c96d3e76fbe11c8e1416284ca3b6bf3f96cc7425c9240683bb54fe69c"
+    },
+    {
+      "patch": "160-r8101-linux-6.6-backported-eee.patch",
+      "path": "package/kernel/r8101/patches/110-r8101-print-link-speed-and-duplex-mode.patch",
+      "sha256": "14bdba8e53898570c4ed5faaa1c9d34538bd56b7db0bc620e6c95bbcc3d603a3",
+      "before_sha256": "5fe6a068d57b4af5c1c18d56d567ca655c6c044e004991db3561ab8923fe4c00",
+      "after_sha256": "e50ade90faf8733cf7ed0d7977cf3008462e0be950f50b04535dac495092e5ed"
     }
   ]
 }

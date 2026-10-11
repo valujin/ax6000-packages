@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -204,6 +205,45 @@ class FirmwarePatchTests(unittest.TestCase):
         self.assertRegex(text, r'if \(mhi_get_no_free_descriptors\(mhi_dev, DMA_TO_DEVICE\) == 0 '
                          r'&& \(file->f_flags & O_NONBLOCK\)\)\s*break;')
         self.assertRegex(text, r'if \(file->f_flags & O_NONBLOCK\)\s*return -EAGAIN;')
+
+    def test_r8101_package_patch_preserves_original_and_selects_complete_backported_eee(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        patch = self.source / 'package/kernel/r8101/patches/110-r8101-print-link-speed-and-duplex-mode.patch'
+        original_patch = gzip.decompress((ROOT / 'tests/fixtures/110-r8101-print-link-speed-and-duplex-mode.patch.gz').read_bytes())
+        self.assertTrue(patch.read_bytes().startswith(original_patch), 'existing link-speed patch must remain byte-identical')
+        original_patch_path = self.source / 'original-r8101.patch'
+        original_patch_path.write_bytes(original_patch)
+        outputs = []
+        for name, applied in [('before-eee-fix', original_patch_path), ('after-eee-fix', patch)]:
+            driver = self.source / name
+            (driver / 'src').mkdir(parents=True)
+            for path, fixture in [('r8101_n.c', 'r8101-original-n.c.gz'), ('r8101.h', 'r8101-original.h.gz')]:
+                (driver / 'src' / path).write_bytes(gzip.decompress((ROOT / 'tests/fixtures' / fixture).read_bytes()))
+            result = subprocess.run(['patch', '--batch', '-p1', '-i', str(applied)], cwd=driver,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            outputs.append(((driver / 'src/r8101_n.c').read_bytes(), (driver / 'src/r8101.h').read_bytes()))
+        before, after = outputs
+        self.assertEqual(after[1], before[1], 'the existing driver header patch must remain unchanged')
+        self.assertEqual(after[0], before[0].replace(b'KERNEL_VERSION(6,9,0)', b'KERNEL_VERSION(6,6,0)'),
+                         'only the EEE implementation guard and its closing comment may change')
+        text = after[0].decode()
+        match = re.search(r'#if LINUX_VERSION_CODE >= KERNEL_VERSION\((\d+),(\d+),(\d+)\)\s*'
+                          r'static int\s*rtl_ethtool_get_eee\(struct net_device \*net, struct ethtool_keee \*edata\)', text)
+        self.assertIsNotNone(match)
+        threshold = tuple(map(int, match.groups()))
+        self.assertGreaterEqual((6, 6, 133), threshold)
+        self.assertLess((6, 5, 0), threshold)
+        bitmap_branch = text[match.start():text.index('\n#else', match.start())]
+        for conversion in ['mii_eee_cap1_mod_linkmode_t(edata->supported, val)',
+                           'mii_eee_cap1_mod_linkmode_t(edata->advertised, val)',
+                           'mii_eee_cap1_mod_linkmode_t(edata->lp_advertised, val)',
+                           'linkmode_and(common, edata->advertised, edata->lp_advertised)',
+                           'linkmode_to_mii_eee_cap1_t(eee->advertised)']:
+            self.assertIn(conversion, bitmap_branch)
+        self.assertIn('rtl_ethtool_get_eee(struct net_device *net, struct ethtool_eee *eee)', text)
 
     def test_gobi_and_qmi_use_native_linux66_network_apis(self):
         vendor_source_fixture(self.source)

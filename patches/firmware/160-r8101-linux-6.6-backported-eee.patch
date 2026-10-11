@@ -1,0 +1,41 @@
+r8101: select the complete EEE bitmap API implementation for this 6.6 backport.
+
+Pinned Padavan source ec9ef10 applies MediaTek 999-1703 EEE backports to Linux
+6.6.133, so ethtool_ops uses ethtool_keee and linkmode bitmaps. The downloaded
+r8101 driver already implements that API behind a 6.9 guard. Select its whole
+implementation on this frozen kernel, preserving the legacy branch and all
+existing package patch bytes. This is not a claim about stock Linux 6.6.
+
+Source archive: r8101-1.039.00.tar.bz2
+SHA256: e64e1738e71d6717dd844bf771fea4691edae63e92d7d03bb5ad2ef08e56e72b
+References:
+https://github.com/openwrt/rtl8101/blob/master/r8101_n.c
+https://github.com/padavanonly/immortalwrt-mt798x-6.6/tree/ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8/target/linux/mediatek/patches-6.6
+
+--- a/package/kernel/r8101/patches/110-r8101-print-link-speed-and-duplex-mode.patch
++++ b/package/kernel/r8101/patches/110-r8101-print-link-speed-and-duplex-mode.patch
+@@ -98,3 +98,24 @@
+  
+                          tp->phy_reg_aner = 0;
+                          tp->phy_reg_anlpar = 0;
++
++--- a/src/r8101_n.c
+++++ b/src/r8101_n.c
++@@ -4716,7 +4716,7 @@
++ }
++ 
++ #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)
++-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
+++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
++ static int
++ rtl_ethtool_get_eee(struct net_device *net, struct ethtool_keee *edata)
++ {
++@@ -4898,7 +4898,7 @@
++ 
++         return 0;
++ }
++-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0) */
+++#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0) */
++ #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0) */
++ 
++ #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
