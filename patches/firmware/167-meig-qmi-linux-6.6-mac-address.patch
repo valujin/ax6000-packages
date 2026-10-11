@@ -1,12 +1,28 @@
-Meig QMI: update the MAC through Linux 6.6 address-state helpers.
+Meig QMI: use Linux 6.6 MAC state and CDC-WDM registration APIs.
 
 Keep the possibly_iphdr condition and both original bit operations. Copy
 six bytes locally and set the address through eth_hw_addr_set instead of
 writing the const dev_addr storage directly.
-Reference: https://github.com/torvalds/linux/blob/v6.6/include/linux/etherdevice.h
+
+Register the existing QMI control channel with WWAN_PORT_QMI, matching the
+kernel qmi_wwan driver; retain its interface, endpoint, 4096-byte transfer
+limit, and existing power-management callback.
+References:
+https://github.com/torvalds/linux/blob/v6.6/include/linux/etherdevice.h
+https://github.com/torvalds/linux/blob/v6.6/include/linux/usb/cdc-wdm.h
+https://github.com/torvalds/linux/blob/v6.6/drivers/net/usb/qmi_wwan.c
 
 --- a/package/mtk/applications/5g-modem/meig_QMI_WWAN/src/qmi_wwan.c
 +++ b/package/mtk/applications/5g-modem/meig_QMI_WWAN/src/qmi_wwan.c
+@@ -232,7 +232,7 @@
+ 
+ 	/* register subdriver */
+ 	subdriver = usb_cdc_wdm_register(info->control, &dev->status->desc,
+-					 4096, &qmi_wwan_cdc_wdm_manage_power);
++					 4096, WWAN_PORT_QMI, &qmi_wwan_cdc_wdm_manage_power);
+ 	if (IS_ERR(subdriver)) {
+ 		dev_err(&info->control->dev, "subdriver registration failed\n");
+ 		rv = PTR_ERR(subdriver);
 @@ -368,8 +368,12 @@
  
  	/* make MAC addr easily distinguishable from an IP header */

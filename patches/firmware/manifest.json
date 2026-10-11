@@ -173,9 +173,9 @@
     {
       "patch": "167-meig-qmi-linux-6.6-mac-address.patch",
       "path": "package/mtk/applications/5g-modem/meig_QMI_WWAN/src/qmi_wwan.c",
-      "sha256": "9761a3deb5f0cb696512131f6654b101b34cc2e303a91a8a7d1aa7d07ce17454",
+      "sha256": "e29696f37e76eab7ec7c352b6d6ad8b956458f46b86a9d7610024cc08ac03ec6",
       "before_sha256": "e70e7e21b1b6e4b951528605964b7ff925f567512c50f8d298bfc977ac2a0d6d",
-      "after_sha256": "77617b3c834a476829a380ed6c3c5ff0b6ad08701405cee3a6fc7596cf1586c1",
+      "after_sha256": "11d598a33d310ca2b1759a1fb211ad929a0ac4b3149b0158618090d676d7471b",
       "fixture": "meig-qmi-qmi-wwan.c.gz"
     }
   ]

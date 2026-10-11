@@ -384,7 +384,10 @@ class FirmwarePatchTests(unittest.TestCase):
         patched = target.read_text()
         old_block = re.search(r'\tif \(possibly_iphdr\(dev->net->dev_addr\)\) \{\n.*?\n\t\}', original, re.S).group()
         new_block = re.search(r'\tif \(possibly_iphdr\(dev->net->dev_addr\)\) \{\n.*?\n\t\}', patched, re.S).group()
-        self.assertEqual(patched.replace(new_block, old_block), original)
+        restored = patched.replace(new_block, old_block)
+        restored = restored.replace('4096, WWAN_PORT_QMI, &qmi_wwan_cdc_wdm_manage_power);',
+                                    '4096, &qmi_wwan_cdc_wdm_manage_power);')
+        self.assertEqual(restored, original)
         self.assertIn('u8 addr[ETH_ALEN];', new_block)
         self.assertIn('ether_addr_copy(addr, dev->net->dev_addr);', new_block)
         self.assertIn('eth_hw_addr_set(dev->net, addr);', new_block)
@@ -396,6 +399,18 @@ class FirmwarePatchTests(unittest.TestCase):
         for first_byte in range(256):
             self.assertEqual((first_byte | old_masks[0]) & old_masks[1],
                              (first_byte | new_masks[0]) & new_masks[1])
+
+    def test_meig_cdc_wdm_registration_uses_qmi_type_and_keeps_existing_callback(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        target = self.source / 'package/mtk/applications/5g-modem/meig_QMI_WWAN/src/qmi_wwan.c'
+        text = target.read_text()
+        calls = re.findall(r'subdriver = usb_cdc_wdm_register\((.*?)\);', text, re.S)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(re.sub(r'\s+', ' ', calls[0]),
+                         'info->control, &dev->status->desc, 4096, WWAN_PORT_QMI, &qmi_wwan_cdc_wdm_manage_power')
+        self.assertIn('#include <linux/usb/cdc-wdm.h>', text)
 
     def test_gobi_and_qmi_use_native_linux66_network_apis(self):
         vendor_source_fixture(self.source)
