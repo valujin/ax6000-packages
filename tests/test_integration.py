@@ -37,7 +37,7 @@ class FirmwareExportIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
-            profile['packages'] = ['kmod-wireguard']
+            profile['packages'] = ['kmod-wireguard', 'kmod-amneziawg']
             profile['image_packages'] = []
             profile['build_source']['publication_url'] = 'https://example.com/packages'
             profile_path = root / 'profile.json'
@@ -56,6 +56,8 @@ class FirmwareExportIntegration(unittest.TestCase):
             abi = '6.6.133~' + 'a' * 32 + '-r1'
             kernel_ipk(packages / 'kernel.ipk', abi)
             ipk(packages / 'kmod-wireguard.ipk', kernel=abi)
+            ipk(packages / 'kmod-ipt-geoip.ipk', name='kmod-ipt-geoip', kernel=abi)
+            ipk(packages / 'kmod-amneziawg.ipk', name='kmod-amneziawg', kernel=abi)
             (target / 'immortalwrt-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin').write_bytes(b'image')
             sdk = target / 'immortalwrt-sdk-mediatek-filogic.tar.xz'
             kernel_relative = Path('build_dir/target-aarch64_cortex-a53_musl/linux-mediatek_filogic/linux-6.6.133')
@@ -64,6 +66,7 @@ class FirmwareExportIntegration(unittest.TestCase):
                             'Module.symvers': b'0x12345678\tfixture\tvmlinux\tEXPORT_SYMBOL\n',
                             '.vermagic': ('a' * 32 + '\n').encode(),
                             '.config.set': b'CONFIG_WIREGUARD=m\n',
+                            'modules.builtin.modinfo': b'kernel/fixture.ko:license=GPL\x00',
                             'include/generated/autoconf.h': b'#define CONFIG_WIREGUARD_MODULE 1\n',
                             'include/config/kernel.release': b'6.6.133\n'}
             for name, data in kernel_files.items():
@@ -72,11 +75,13 @@ class FirmwareExportIntegration(unittest.TestCase):
                 path.write_bytes(data)
             (source / 'tmp').mkdir()
             (source / 'tmp/.packageinfo').write_text(
-                'Source-Makefile: package/kernel/linux/Makefile\nPackage: kmod-wireguard\n')
+                'Source-Makefile: package/kernel/linux/Makefile\nPackage: kmod-wireguard\n'
+                'Source-Makefile: package/feeds/packages/xtables-addons/Makefile\nPackage: kmod-ipt-geoip\n'
+                'Source-Makefile: package/feeds/amneziawg/kmod-amneziawg/Makefile\nPackage: kmod-amneziawg\n')
             with tarfile.open(sdk, 'w:xz') as archive:
                 sdk_files = {'Makefile': b'all:'}
                 sdk_files.update({str(kernel_relative / name): data for name, data in kernel_files.items()
-                                  if name not in ('.vermagic', '.config.set')})
+                                  if name not in ('.vermagic', '.config.set', 'modules.builtin.modinfo')})
                 for name, data in sdk_files.items():
                     member = tarfile.TarInfo('sdk/' + name)
                     member.size = len(data)
@@ -86,7 +91,8 @@ class FirmwareExportIntegration(unittest.TestCase):
             signer.write_text('#!/bin/sh\nexit 0\n')
             signer.chmod(0o755)
             (source / '.config').write_text('CONFIG_TARGET_mediatek=y\n')
-            (source / 'build-selection.json').write_text(json.dumps({'selected_kmods': ['kmod-wireguard']}))
+            (source / 'build-selection.json').write_text(json.dumps(
+                {'selected_kmods': ['kmod-wireguard', 'kmod-ipt-geoip', 'kmod-amneziawg']}))
             output = root / 'raw'
             result = subprocess.run(['python3', str(ROOT / 'scripts/prepare-firmware.py'),
                                      '--profile', str(profile_path), '--lock', str(lock_path),
@@ -109,11 +115,37 @@ class FirmwareExportIntegration(unittest.TestCase):
             with tarfile.open(output / 'bin/targets/mediatek/filogic' / sdk.name) as archive:
                 baseline = json.load(archive.extractfile('sdk/ax6000-baseline/manifest.json'))
                 self.assertEqual(baseline['kernel_version'], abi)
-                self.assertEqual(baseline['core_kmods'], ['kmod-wireguard'])
+                self.assertEqual(baseline['frozen_kmods'], ['kmod-ipt-geoip', 'kmod-wireguard'])
+                self.assertEqual(baseline['refreshed_kmods'], ['kmod-amneziawg'])
+                self.assertNotIn('sdk/ax6000-baseline/ipks/kmod-amneziawg.ipk', archive.getnames())
                 self.assertEqual(archive.extractfile('sdk/ax6000-baseline/ipks/kmod-wireguard.ipk').read(),
                                  (packages / 'kmod-wireguard.ipk').read_bytes())
                 for name, data in kernel_files.items():
                     self.assertEqual(archive.extractfile('sdk/' + str(kernel_relative / name)).read(), data)
+            extracted = root / 'extracted'
+            result = subprocess.run(['python3', str(ROOT / 'scripts/prepare.py'), '--extract', str(sdk),
+                                     '--extract-dir', str(extracted)], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            daily_sdk = extracted / 'sdk'
+            daily_packages = daily_sdk / 'bin/packages'
+            daily_packages.mkdir(parents=True)
+            ipk(daily_packages / 'amneziawg-refreshed.ipk', name='kmod-amneziawg', kernel=abi)
+            daily_signer = daily_sdk / 'staging_dir/host/bin/usign'
+            daily_signer.parent.mkdir(parents=True)
+            shutil.copy2(signer, daily_signer)
+            shutil.copy2(source / 'build-selection.json', daily_sdk / 'build-selection.json')
+            daily_output = root / 'daily-raw'
+            result = subprocess.run(['python3', str(ROOT / 'scripts/prepare.py'),
+                                     '--profile', str(output / 'profile.json'), '--lock', str(output / 'lock.json'),
+                                     '--sdk-dir', str(daily_sdk), '--phase', 'export',
+                                     '--sdk-archive', str(sdk), '--output-dir', str(daily_output)],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((daily_output / 'bin/packages/kmod-ipt-geoip.ipk').read_bytes(),
+                             (packages / 'kmod-ipt-geoip.ipk').read_bytes())
+            self.assertEqual((daily_output / 'bin/packages/amneziawg-refreshed.ipk').read_bytes(),
+                             (daily_packages / 'amneziawg-refreshed.ipk').read_bytes())
+            self.assertFalse((daily_output / 'bin/packages/kmod-amneziawg.ipk').exists())
 
 
 @unittest.skipUnless(USIGN, 'real OpenWrt host usign unavailable; set USIGN to run signing integration')

@@ -77,6 +77,12 @@ read`, Pages setup receives `pages: read`, and the deployment job alone receives
 
 ## Publication and recovery
 
+To publish an existing isolated local full build, use
+[`publish-existing.yml`](../.github/workflows/publish-existing.yml) with an
+immutable release from this repository. See [the import instructions](PUBLISH.md).
+That workflow verifies the archived build and signs it without running firmware
+compilation or executing release-provided binaries.
+
 Every build consumes the resolved source lock. The publisher validates package
 metadata against the profile, including package architecture and the exact kernel
 dependency for kernel modules, before constructing and signing the index.

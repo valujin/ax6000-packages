@@ -4,6 +4,7 @@ import argparse
 import base64
 import gzip
 import hashlib
+import html
 import io
 import json
 from pathlib import Path
@@ -11,6 +12,11 @@ import re
 import shutil
 import subprocess
 import tarfile
+
+
+def sha256_file(path):
+    with path.open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
 def read_control(path):
@@ -95,7 +101,7 @@ def stage_feed(raw, output, profile):
         shutil.copy2(path, target)
         fields = {k: v for k, v in control.items() if k not in ('Filename', 'Size', 'SHA256sum')}
         fields.update(Filename=path.name, Size=str(target.stat().st_size),
-                      SHA256sum=hashlib.sha256(target.read_bytes()).hexdigest())
+                      SHA256sum=sha256_file(target))
         paragraphs.append('\n'.join(f'{key}: {value}' for key, value in fields.items()))
     index = ('\n\n'.join(paragraphs) + '\n\n').encode()
     (feed / 'Packages').write_bytes(index)
@@ -119,7 +125,7 @@ def stage_firmware(raw, output, profile):
     destination.mkdir(parents=True)
     for source in files:
         shutil.copy2(source, destination / source.name)
-    checksums = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n'
+    checksums = ''.join(sha256_file(p) + '  ' + p.name + '\n'
                         for p in sorted(destination.iterdir()) if p.name != 'SHA256SUMS')
     (destination / 'SHA256SUMS').write_text(checksums)
     return destination
@@ -173,17 +179,27 @@ def main():
     state.mkdir()
     shutil.copy2(args.lock, state / 'lock.json')
     (args.output / 'profile.json').write_text(json.dumps(profile, indent=2) + '\n')
-    for name in ('build-selection.json', 'build-provenance.json'):
+    for name in ('build-selection.json', 'build-provenance.json', 'firmware-manifest.json', 'build.config'):
         if (args.input / name).is_file():
             shutil.copy2(args.input / name, args.output / name)
     (args.output / '.nojekyll').touch()
+    downloads = ''
+    if firmware_dir:
+        downloads = '<ul>' + ''.join(
+            f'<li><a href="{html.escape(p.relative_to(args.output).as_posix(), quote=True)}">'
+            f'{html.escape(p.name)}</a></li>'
+            for p in sorted(firmware_dir.iterdir()) if p.is_file() and
+            (p.name.endswith(('.bin', '.itb', '.tar.zst', '.tar.xz')) or p.name == 'SHA256SUMS')
+        ) + '</ul>'
     (args.output / 'index.html').write_text('<!doctype html><meta charset="utf-8"><title>AX6000 packages</title>'
         '<h1>AX6000 packages</h1><p>Signed supplemental opkg repository.</p>'
         '<p><a href="profile.json">Firmware compatibility</a> · '
         '<a href="repository.pub">Signing public key</a> · '
         '<a href="state/lock.json">Source versions</a></p>'
         f'<p><a href="{feed.relative_to(args.output).as_posix()}/Packages">Package index</a></p>' +
-        (f'<p>Firmware/SDK: <a href="{firmware_dir.relative_to(args.output).as_posix()}/SHA256SUMS">checksums</a></p>' if firmware_dir else ''))
+        (f'<p>Kernel ABI: <code>{html.escape(profile["firmware"]["kernel_version"])}</code></p>'
+         '<p>Firmware and SDK for Redmi AX6000 stock layout. Install the matching firmware '
+         'before using these kernel modules.</p>' + downloads if firmware_dir else ''))
     print(f'Validated and signed feed: {feed}')
 
 

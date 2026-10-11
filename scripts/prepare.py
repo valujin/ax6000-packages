@@ -327,6 +327,9 @@ def baseline_packages(profile, sdk):
             and manifest.get("kernel_version") == profile["firmware"]["kernel_version"]
             and manifest.get("architecture") == profile["firmware"]["architecture"],
             "SDK module baseline differs from the exact firmware identity")
+    frozen = manifest.get("frozen_kmods", manifest.get("core_kmods", []))
+    require(isinstance(frozen, list) and all(isinstance(name, str) and name.startswith("kmod-") for name in frozen)
+            and len(frozen) == len(set(frozen)), "invalid frozen module baseline list")
     result = {}
     for entry in manifest["files"]:
         relative = PurePosixPath(entry["path"])
@@ -344,10 +347,10 @@ def baseline_packages(profile, sdk):
         if control["Package"] == "kernel":
             require(control["Version"] == profile["firmware"]["kernel_version"], "baseline kernel identity version mismatch")
         require(control["Package"] not in result, "duplicate baseline package")
-        require(control["Package"] == "kernel" or control["Package"] in manifest["core_kmods"],
-                "baseline must contain only frozen core modules and kernel identity")
+        require(control["Package"] == "kernel" or control["Package"] in frozen,
+                "baseline must contain only frozen modules and kernel identity")
         result[control["Package"]] = path
-    require(set(manifest["core_kmods"]) <= result.keys(), "baseline manifest omits listed core modules")
+    require(set(frozen) <= result.keys(), "baseline manifest omits listed frozen modules")
     return result
 
 
@@ -400,7 +403,7 @@ def verify_selection(profile, sdk):
 
 
 def export_packages(profile, lock, sdk, output, sdk_archive=None):
-    """Merge frozen core modules with freshly built packages by opkg package name."""
+    """Merge frozen modules with freshly built packages by opkg package name."""
     from publish import read_control, validate_package
     require(not output.exists(), "SDK output directory already exists")
     baseline = baseline_packages(profile, sdk)

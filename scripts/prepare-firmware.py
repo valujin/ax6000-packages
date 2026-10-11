@@ -134,7 +134,7 @@ def core_kmod_names(source):
 
 
 def augment_sdk(profile, source, archive, controls, abi):
-    """Preserve the original SDK kernel configuration and freeze in-tree module IPKs."""
+    """Freeze every built module except requested external modules refreshed daily."""
     match = prepare.KERNEL_PACKAGE.fullmatch(abi)
     version, vermagic, _ = match.groups()
     trees = [path.parent for path in (source / "build_dir").glob("target-*/linux-*/linux-*/.vermagic")
@@ -145,8 +145,12 @@ def augment_sdk(profile, source, archive, controls, abi):
                     "built kernel source release differs from its kernel ipk")
     core = core_kmod_names(source)
     prepare.require("kmod-amneziawg" not in core, "external AmneziaWG must be rebuilt rather than frozen as a core module")
+    built_modules = {control["Package"] for _, control in controls
+                     if control.get("Package", "").startswith("kmod-")}
+    refreshed = {name for name in profile["packages"] if name.startswith("kmod-")} - core
+    frozen = built_modules - refreshed
     baseline = [(path, control) for path, control in controls
-                if control.get("Package") == "kernel" or control.get("Package") in core]
+                if control.get("Package") == "kernel" or control.get("Package") in frozen]
     prepare.require(bool(core), "source metadata did not identify any core kernel modules for SDK baseline")
     with tempfile.TemporaryDirectory(prefix="ax6000-sdk-", dir=source.parent) as temporary:
         temporary = Path(temporary)
@@ -163,6 +167,9 @@ def augment_sdk(profile, source, archive, controls, abi):
         for identity in (".config", "Module.symvers"):
             prepare.require((sdk_kernel / identity).read_bytes() == (kernel / identity).read_bytes(),
                             f"generated SDK kernel {identity} differs from the built source context")
+        prepare.require((kernel / "modules.builtin.modinfo").is_file(),
+                        "built prepared kernel lacks modules.builtin.modinfo required by the SDK kernel package")
+        shutil.copy2(kernel / "modules.builtin.modinfo", sdk_kernel / "modules.builtin.modinfo")
         for filename in (".vermagic", ".config.set"):
             if (kernel / filename).is_file():
                 shutil.copy2(kernel / filename, sdk_kernel / filename)
@@ -173,7 +180,7 @@ def augment_sdk(profile, source, archive, controls, abi):
         files = []
         for path, control in baseline:
             target = snapshot / "ipks" / path.name
-            prepare.require(not target.exists(), "duplicate core baseline package filename")
+            prepare.require(not target.exists(), "duplicate frozen baseline package filename")
             shutil.copy2(path, target)
             with target.open("rb") as stream:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -182,7 +189,7 @@ def augment_sdk(profile, source, archive, controls, abi):
         (snapshot / "manifest.json").write_text(json.dumps(
             {"schema_version": 1, "source_commit": profile["firmware"]["commit"],
              "kernel_version": abi, "architecture": profile["firmware"]["architecture"],
-             "core_kmods": sorted(core & {control["Package"] for _, control in baseline}), "files": files},
+             "frozen_kmods": sorted(frozen), "refreshed_kmods": sorted(refreshed & built_modules), "files": files},
             indent=2, sort_keys=True) + "\n")
         # Carry immutable images and build metadata into daily SDK exports. The SDK
         # itself is added from the verified download later, avoiding archive recursion.
