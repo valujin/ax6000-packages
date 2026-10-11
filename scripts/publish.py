@@ -133,22 +133,35 @@ def stage_firmware(raw, output, profile):
         return None
     build_id = firmware_build_id(profile)
     destination = Path(output) / 'firmware' / build_id
-    files = [p for p in targets.iterdir() if p.is_file() and
-             (p.name.endswith(('.bin', '.itb', '.tar.zst', '.tar.xz', '.manifest', '.json')) or
-              p.name in ('config.buildinfo', 'feeds.buildinfo', 'version.buildinfo', 'sha256sums'))]
-    if not files:
-        return None
     sdk = profile.get('sdk', {})
     sdk_name = Path(urlsplit(sdk.get('url', '')).path).name
+    # RAM BL2 variants and generic kernel components share BIN_DIR with device
+    # images. Offer only complete stock sysupgrade/recovery images here.
+    device = profile['firmware'].get('device')
+    images = []
+    if device == 'xiaomi_redmi-router-ax6000-stock':
+        marker = '-' + device + '-'
+        images = [p for p in targets.iterdir() if p.is_file() and marker in p.name
+                  and (p.name.endswith(marker + 'squashfs-sysupgrade.bin')
+                       or p.name.endswith(marker + 'initramfs-kernel.bin'))]
+    metadata = {'config.buildinfo', 'feeds.buildinfo', 'version.buildinfo', 'profiles.json'}
+    for image in images:
+        prefix = image.name.split('-' + device + '-', 1)[0]
+        metadata.update({prefix + '.manifest', prefix + '-' + device + '.manifest'})
+    image_names = {p.name for p in images}
+    files = [p for p in targets.iterdir() if p.is_file() and
+             (p.name in image_names or p.name in metadata or (sdk_name and p.name == sdk_name))]
+    if not files:
+        return None
     for source in files:
         if source.name == sdk_name and sha256_file(source) != sdk.get('sha256'):
             raise ValueError('Firmware SDK archive does not match the published profile checksum')
     destination.mkdir(parents=True)
     for source in files:
         shutil.copy2(source, destination / source.name)
-    checksums = ''.join(sha256_file(p) + '  ' + p.name + '\n'
-                        for p in sorted(destination.iterdir()) if p.name != 'SHA256SUMS')
-    (destination / 'SHA256SUMS').write_text(checksums)
+    checksums = ''.join(sha256_file(p) + '  ' + p.name + '\n' for p in sorted(destination.iterdir()))
+    for filename in ('sha256sums', 'SHA256SUMS'):
+        (destination / filename).write_text(checksums)
     return destination
 
 
@@ -209,8 +222,7 @@ def main():
         downloads = '<ul>' + ''.join(
             f'<li><a href="{html.escape(p.relative_to(args.output).as_posix(), quote=True)}">'
             f'{html.escape(p.name)}</a></li>'
-            for p in sorted(firmware_dir.iterdir()) if p.is_file() and
-            (p.name.endswith(('.bin', '.itb', '.tar.zst', '.tar.xz')) or p.name == 'SHA256SUMS')
+            for p in sorted(firmware_dir.iterdir()) if p.is_file()
         ) + '</ul>'
     (args.output / 'index.html').write_text('<!doctype html><meta charset="utf-8"><title>AX6000 packages</title>'
         '<h1>AX6000 packages</h1><p>Signed supplemental opkg repository.</p>'

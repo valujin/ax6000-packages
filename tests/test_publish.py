@@ -130,6 +130,45 @@ class PublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'build id'):
             self.module.firmware_build_id(self.profile)
 
+    def test_stock_downloads_exclude_generic_bootloaders_and_keep_packages(self):
+        device = 'xiaomi_redmi-router-ax6000-stock'
+        self.profile['firmware'].update(commit='a' * 40, target='mediatek', subtarget='filogic', device=device)
+        target = self.root / 'raw/bin/targets/mediatek/filogic'
+        target.mkdir(parents=True)
+        prefix = 'immortalwrt-mediatek-filogic'
+        images = {f'{prefix}-{device}-squashfs-sysupgrade.bin', f'{prefix}-{device}-initramfs-kernel.bin'}
+        metadata = {'config.buildinfo', 'feeds.buildinfo', 'version.buildinfo', 'profiles.json',
+                    prefix + '.manifest'}
+        excluded = {'mt7981-ram-ddr3-bl2.bin', 'mt7986-ram-ddr4-bl2.bin',
+                    'vmlinux.bin', prefix + '-kernel.bin',
+                    f'{prefix}-{device}-kernel.bin',
+                    f'{prefix}-xiaomi_redmi-router-ax6000-ubootmod-squashfs-sysupgrade.bin',
+                    'unrelated-sdk.tar.xz'}
+        for name in images | metadata | excluded:
+            (target / name).write_bytes(name.encode())
+        (target / 'sha256sums').write_text('stale entries including generic bootloaders\n')
+        archive = target / 'actual-sdk.tar.xz'
+        archive.write_bytes(b'exact SDK')
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        build_id = 'redmi-ax6000-' + 'a' * 12 + '-' + digest[:12]
+        self.profile.update(build_id=build_id, sdk={'url': f'https://example.com/firmware/{build_id}/{archive.name}',
+                                                   'sha256': digest})
+        package = self.root / 'raw/bin/packages/kmod-wireguard.ipk'
+        package.parent.mkdir(parents=True)
+        ipk(package)
+        original_package = package.read_bytes()
+        destination = self.module.stage_firmware(self.root / 'raw', self.root / 'public', self.profile)
+        self.assertEqual({p.name for p in destination.iterdir()},
+                         images | metadata | {archive.name, 'SHA256SUMS', 'sha256sums'})
+        self.assertEqual((destination / 'sha256sums').read_bytes(), (destination / 'SHA256SUMS').read_bytes())
+        checksums = (destination / 'SHA256SUMS').read_text()
+        for name in images | metadata | {archive.name}:
+            self.assertIn(hashlib.sha256((destination / name).read_bytes()).hexdigest() + '  ' + name, checksums)
+        feed = self.module.stage_feed(self.root / 'raw', self.root / 'public', self.profile)
+        self.assertEqual((feed / package.name).read_bytes(), original_package)
+        for name in excluded:
+            self.assertTrue((target / name).exists(), 'Full raw provenance artifact must remain')
+
 
 if __name__ == '__main__':
     unittest.main()
