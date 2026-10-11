@@ -89,6 +89,7 @@ def select(profile, source):
     prepare.require(desired in devices, "pinned source has no AX6000 stock device profile")
     values = {device: ("y" if device == desired else "n") for device in devices}
     values.update({"SIGNED_PACKAGES": "y", "SIGNATURE_CHECK": "y"})
+    values.update(prepare.luci_language_symbols(profile, source, "y"))
     baseline_y = set(re.findall(r"^CONFIG_PACKAGE_(.+)=y$", config, re.M))
     kmods = sorted(name for name in available if name.startswith("kmod-")) if profile.get("all_kmods", True) else []
     for name in sorted(requested | set(kmods)):
@@ -96,6 +97,7 @@ def select(profile, source):
     config_path.write_text(set_symbols(config, values))
     report = {"profile": profile["id"], "requested": sorted(requested), "candidate_kmods": kmods,
               "source_commit": profile["firmware"]["commit"], "device": profile["build_source"]["device"],
+              "luci_languages": {name: "y" for name in profile.get("luci_languages", [])},
               "baseline_vendor_drivers": sorted(name for name in baseline_y if name in
                                                  {"kmod-mt_wifi", "kmod-conninfra", "kmod-warp", "kmod-mediatek_hnat"})}
     (source / "build-selection.json").write_text(json.dumps(report, indent=2) + "\n")

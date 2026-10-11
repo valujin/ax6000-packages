@@ -63,7 +63,6 @@
     "luci-app-banip",
     "openvpn-openssl",
     "luci-app-openvpn",
-    "strongswan-full",
     "xl2tpd",
     "ppp-mod-pptp",
     "kmod-tun",
@@ -73,7 +72,10 @@
     "luci-ssl",
     "luci-i18n-base-ru",
     "luci-i18n-pbr-ru",
-    "luci-i18n-mwan3-ru"
+    "luci-i18n-mwan3-ru",
+    "strongswan",
+    "strongswan-default",
+    "strongswan-swanctl"
   ],
   "all_kmods": true,
   "build_source": {
@@ -93,7 +95,9 @@
     "luci",
     "luci-ssl",
     "luci-i18n-base-ru",
-    "luci-i18n-pbr-ru",
-    "luci-i18n-mwan3-ru"
+    "luci-i18n-pbr-ru"
+  ],
+  "luci_languages": [
+    "ru"
   ]
 }

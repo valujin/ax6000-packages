@@ -84,6 +84,10 @@ def validate(profile, lock):
         "packages must be a nonempty list of OpenWrt package names")
     require(len(set(packages)) == len(packages), "duplicate requested package")
     require(isinstance(profile.get("all_kmods", True), bool), "all_kmods must be boolean")
+    languages = profile.get("luci_languages", [])
+    require(isinstance(languages, list) and all(isinstance(language, str) and
+            re.fullmatch(r"[a-z]{2,3}(?:_[A-Za-z]{2,8})?", language) for language in languages)
+            and len(set(languages)) == len(languages), "luci_languages must be a unique list of LuCI language codes")
     require(isinstance(lock, dict), "lock must be an object")
     feed_pins(profile, lock)
     overrides = package_overrides(lock)
@@ -289,6 +293,17 @@ def available_packages(sdk):
     return packages & config
 
 
+def luci_language_symbols(profile, sdk, value):
+    languages = profile.get("luci_languages", [])
+    if not languages:
+        return {}
+    metadata = (sdk / "tmp/.config-package.in").read_text()
+    available = set(re.findall(r"^\s*(?:menu)?config\s+LUCI_LANG_(\S+)", metadata, re.M))
+    require(set(languages) <= available, "requested LuCI languages absent from pinned feeds: "
+            + ", ".join(sorted(set(languages) - available)))
+    return {"LUCI_LANG_" + language: value for language in languages}
+
+
 def check_sdk_identity(profile, sdk):
     config = (sdk / ".config").read_text()
     expected = {"TARGET_BOARD": profile["firmware"]["target"],
@@ -346,26 +361,36 @@ def select_packages(profile, sdk):
     selected = sorted((requested | set(kmods)) - baseline.keys())
     config = sdk / ".config"
     text = config.read_text()
+    language_symbols = luci_language_symbols(profile, sdk, "m")
+    text = re.sub(r"^(?:# )?CONFIG_(LUCI_LANG_[^= ]+)(?:=.*| is not set)\n?",
+                  lambda match: "" if match.group(1) in language_symbols else match.group(0), text, flags=re.M)
     # Preserve target/toolchain config, clear preselected package defaults and firmware build output.
     text = re.sub(r"^(?:CONFIG_PACKAGE_.*|# CONFIG_PACKAGE_.*)\n?", "", text, flags=re.M)
     text = re.sub(r"^(?:CONFIG_(?:SDK|ALL|ALL_KMODS|ALL_NONSHARED|SIGNED_PACKAGES|BUILD_LOG|BUILDBOT|TARGET_ROOTFS_[A-Z0-9_]+)=.*|# CONFIG_(?:SDK|ALL|ALL_KMODS|ALL_NONSHARED|SIGNED_PACKAGES|BUILD_LOG|BUILDBOT|TARGET_ROOTFS_[A-Z0-9_]+) is not set)\n?", "", text, flags=re.M)
     config.write_text(text.rstrip() + "\nCONFIG_SDK=y\n# CONFIG_ALL is not set\n"
                       "# CONFIG_ALL_KMODS is not set\n# CONFIG_ALL_NONSHARED is not set\n"
                       "# CONFIG_SIGNED_PACKAGES is not set\n"
+                      + "".join(f"CONFIG_{symbol}={value}\n" for symbol, value in sorted(language_symbols.items()))
                       + "".join(f"# CONFIG_PACKAGE_{name} is not set\n" for name in sorted(available - set(selected)))
                       + "".join(f"CONFIG_PACKAGE_{name}=m\n" for name in selected))
     report = {"profile": profile["id"], "requested": sorted(requested), "candidate_kmods": kmods,
-              "baseline_kmods": sorted(name for name in baseline if name.startswith("kmod-"))}
+              "baseline_kmods": sorted(name for name in baseline if name.startswith("kmod-")),
+              "luci_languages": {name: "m" for name in profile.get("luci_languages", [])}}
     (sdk / "build-selection.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
 
 def verify_selection(profile, sdk):
     report = json.loads((sdk / "build-selection.json").read_text())
-    selected = set(re.findall(r"^CONFIG_PACKAGE_(.+)=[my]$", (sdk / ".config").read_text(), re.M))
+    config = (sdk / ".config").read_text()
+    selected = set(re.findall(r"^CONFIG_PACKAGE_(.+)=[my]$", config, re.M))
     baseline = baseline_packages(profile, sdk)
     missing = sorted(set(profile["packages"]) - selected - baseline.keys())
     require(not missing, "requested packages unresolved after defconfig: " + ", ".join(missing))
+    for language in profile.get("luci_languages", []):
+        expected = report.get("luci_languages", {}).get(language)
+        require(expected in {"m", "y"} and f"CONFIG_LUCI_LANG_{language}={expected}\n" in config,
+                f"requested LuCI language {language} unresolved after defconfig")
     report["selected_packages"] = sorted(selected)
     report["selected_kmods"] = sorted(set(report["candidate_kmods"]) & selected)
     report["incompatible_kmods"] = sorted(set(report["candidate_kmods"]) - selected)

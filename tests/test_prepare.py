@@ -135,6 +135,26 @@ class PrepareTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing"):
             prepare.select_packages(self.profile, self.sdk)
 
+    def test_sdk_luci_language_selects_modules_and_must_survive_defconfig(self):
+        self.metadata()
+        self.profile["luci_languages"] = ["ru"]
+        metadata = self.sdk / "tmp/.config-package.in"
+        metadata.write_text(metadata.read_text() + "config LUCI_LANG_ru\n")
+        prepare.select_packages(self.profile, self.sdk)
+        config = (self.sdk / ".config").read_text()
+        self.assertIn("CONFIG_LUCI_LANG_ru=m\n", config)
+        prepare.verify_selection(self.profile, self.sdk)
+        (self.sdk / ".config").write_text(config.replace("CONFIG_LUCI_LANG_ru=m\n", ""))
+        with self.assertRaisesRegex(ValueError, "LuCI language ru"):
+            prepare.verify_selection(self.profile, self.sdk)
+
+    def test_invalid_luci_language_profile_refuses(self):
+        for value in (["ru", "ru"], "ru", ["../../ru"]):
+            with self.subTest(value=value):
+                self.profile["luci_languages"] = value
+                with self.assertRaisesRegex(ValueError, "luci_languages"):
+                    prepare.validate(self.profile, self.lock)
+
     def test_sdk_identity_rejects_other_target_or_source_revision(self):
         (self.sdk / "include").mkdir()
         (self.sdk / "include/version.mk").write_text("REVISION:=r100-aaaaaaaaaa\n")
@@ -183,6 +203,34 @@ class PrepareTests(unittest.TestCase):
         path.write_bytes(b"bad")
         with self.assertRaisesRegex(ValueError, "checksum"):
             prepare.baseline_packages(self.profile, self.sdk)
+
+    def test_daily_export_retains_frozen_firmware_and_verified_sdk_archive(self):
+        self.metadata()
+        core = self.baseline()
+        self.profile["packages"] = ["kmod-wireguard"]
+        self.profile["all_kmods"] = False
+        prepare.select_packages(self.profile, self.sdk)
+        (self.sdk / "bin").mkdir()
+        (self.sdk / "bin/kmod-wireguard.ipk").write_bytes(core.read_bytes())
+        signer = self.sdk / "staging_dir/host/bin/usign"
+        signer.parent.mkdir(parents=True)
+        signer.write_text("#!/bin/sh\nexit 0\n")
+        signer.chmod(0o755)
+        assets = self.sdk / "ax6000-baseline/firmware"
+        assets.mkdir()
+        (assets / "ax6000-stock-sysupgrade.bin").write_bytes(b"stock firmware")
+        downloaded = self.root / "sdk.archive"
+        downloaded.write_bytes(b"verified SDK archive")
+        self.profile["sdk"]["sha256"] = hashlib.sha256(downloaded.read_bytes()).hexdigest()
+        output = self.root / "output"
+        prepare.export_packages(self.profile, self.lock, self.sdk, output, downloaded)
+        target = output / "bin/targets/mediatek/filogic"
+        self.assertEqual((target / "ax6000-stock-sysupgrade.bin").read_bytes(), b"stock firmware")
+        self.assertEqual((target / "sdk.tar.xz").read_bytes(), b"verified SDK archive")
+        checksums = (target / "sha256sums").read_text()
+        self.assertIn("  sdk.tar.xz\n", checksums)
+        self.assertEqual((target / "SHA256SUMS").read_text(), checksums)
+        self.assertEqual(len(list((output / "bin/packages").glob("*.ipk"))), 1)
 
     def test_defconfig_dropping_explicit_package_refuses(self):
         self.metadata()
@@ -277,6 +325,9 @@ class FirmwarePreparationTests(unittest.TestCase):
             "menuconfig TARGET_DEVICE_mediatek_filogic_DEVICE_other-router\n"
             "menuconfig TARGET_DEVICE_mediatek_filogic_DEVICE_xiaomi_redmi-router-ax6000-stock\n")
         self.profile["image_packages"] = ["tailscale"]
+        self.profile["luci_languages"] = ["ru"]
+        metadata = self.sdk / "tmp/.config-package.in"
+        metadata.write_text(metadata.read_text() + "config LUCI_LANG_ru\n")
         firmware.configure(self.profile, self.lock, self.sdk)
         firmware.select(self.profile, self.sdk)
         config = (self.sdk / ".config").read_text()
@@ -285,6 +336,7 @@ class FirmwarePreparationTests(unittest.TestCase):
         self.assertIn("CONFIG_PACKAGE_kmod-wireguard=m\n", config)
         self.assertIn("CONFIG_SIGNED_PACKAGES=y\n", config)
         self.assertIn("CONFIG_SIGNATURE_CHECK=y\n", config)
+        self.assertIn("CONFIG_LUCI_LANG_ru=y\n", config)
         self.assertIn("# CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_other-router is not set", config)
 
     def test_source_rejects_ubootmod_layout(self):
