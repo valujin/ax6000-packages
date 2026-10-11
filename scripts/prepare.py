@@ -311,7 +311,8 @@ def check_sdk_identity(profile, sdk):
     for symbol, value in expected.items():
         require(f'CONFIG_{symbol}="{value}"' in config, f"SDK {symbol} does not match exact firmware profile")
     version = (sdk / "include/version.mk").read_text()
-    revision = re.findall(r"^REVISION\s*:?=\s*r[0-9]+-([0-9a-f]{7,40})\s*$", version, re.M)
+    # getver.sh uses r<upstream>+<local commits>-<hash> for fork/detached builds.
+    revision = re.findall(r"^REVISION\s*:?=\s*r[0-9]+(?:\+[0-9]+)?-([0-9a-f]{7,40})\s*$", version, re.M)
     require(len(revision) == 1 and profile["firmware"]["commit"].startswith(revision[0]),
             "SDK baked source revision does not match the firmware commit")
 

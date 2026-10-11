@@ -166,6 +166,26 @@ class PrepareTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source revision"):
             prepare.check_sdk_identity(self.profile, self.sdk)
 
+    def test_sdk_identity_accepts_detached_fork_revision_but_rejects_wrong_hash(self):
+        self.profile["firmware"]["commit"] = "ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8"
+        (self.sdk / "include").mkdir()
+        version = self.sdk / "include/version.mk"
+        version.write_text("REVISION:=r0+33648-ec9ef10efc\n")
+        config = self.sdk / ".config"
+        config.write_text('CONFIG_TARGET_BOARD="mediatek"\nCONFIG_TARGET_SUBTARGET="filogic"\n'
+                          'CONFIG_TARGET_ARCH_PACKAGES="aarch64_cortex-a53"\n')
+        prepare.check_sdk_identity(self.profile, self.sdk)
+        for revision in ("r0+33648-aaaaaaaaaa", "r0+-ec9ef10efc", "r0+33648+1-ec9ef10efc",
+                         "r0+33648-ec9ef1", "r0+33648-ec9ef10efc-dirty", "unknown"):
+            with self.subTest(revision=revision):
+                version.write_text("REVISION:=" + revision + "\n")
+                with self.assertRaisesRegex(ValueError, "source revision"):
+                    prepare.check_sdk_identity(self.profile, self.sdk)
+        version.write_text("REVISION:=r0+33648-ec9ef10efc\n")
+        config.write_text(config.read_text().replace('"filogic"', '"wrong"'))
+        with self.assertRaisesRegex(ValueError, "TARGET_SUBTARGET"):
+            prepare.check_sdk_identity(self.profile, self.sdk)
+
     def baseline(self):
         directory = self.sdk / "ax6000-baseline/ipks"
         directory.mkdir(parents=True)
