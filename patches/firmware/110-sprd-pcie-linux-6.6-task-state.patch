@@ -1,16 +1,42 @@
-SPRD SIPC: read the raw task state through the Linux 6.6 task_struct member.
+SPRD: use the exported Linux 6.6 scheduler API for kernel worker threads.
 
-These two sites only print diagnostic task state as %lx. READ_ONCE protects the
-concurrent state read, and the unsigned long cast preserves the format contract
-for the unsigned int __state member. Existing linux/kernel.h supplies READ_ONCE.
-No scheduling behavior or kernel Kconfig symbols are changed.
+sched_setscheduler is not exported to modules. sched_setattr_nocheck accepts
+these kernel threads while preserving their requested SCHED_FIFO policy and
+10 real-time priority. Initialize sched_attr.size explicitly; existing
+uapi/linux/sched/types.h includes provide its definition on Linux 6.6.
 
 Reference:
+https://github.com/torvalds/linux/blob/v6.6/kernel/sched/core.c
+
+The two diagnostic %lx state reads use (unsigned long)READ_ONCE(task->__state).
+Existing linux/kernel.h provides READ_ONCE; no kernel Kconfig symbols change.
 https://github.com/torvalds/linux/blob/v6.6/include/linux/sched.h
 
 --- a/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/sbuf.c
 +++ b/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/sbuf.c
-@@ -1485,7 +1485,7 @@
+@@ -699,7 +699,11 @@
+ 	u8 ch_index;
+ 	int ret;
+ 	struct smsg_ipc *sipc = NULL;
+-	struct sched_param param = {.sched_priority = 10};
++	struct sched_attr param = {
++		.size = sizeof(struct sched_attr),
++		.sched_policy = SCHED_FIFO,
++		.sched_priority = 10,
++	};
+ 
+ 	sipc = smsg_ipcs[dst];
+ 	ch_index = sipc_channel2index(channel);
+@@ -758,7 +762,7 @@
+ 	sbufs[dst][ch_index] = sbuf;
+ 
+ 	/*set the thread as a real time thread, and its priority is 10*/
+-	sched_setscheduler(sbuf->thread, SCHED_FIFO, &param);
++	sched_setattr_nocheck(sbuf->thread, &param);
+ 	wake_up_process(sbuf->thread);
+ 
+ 	return 0;
+@@ -1485,7 +1489,7 @@
  					 "%s %d: %s, state=0x%lx, pid=%d.\n",
  					 phead,
  					 cnt, task->comm,
@@ -19,7 +45,7 @@ https://github.com/torvalds/linux/blob/v6.6/include/linux/sched.h
  				cnt++;
  				len = strlen(status_info);
  			}
-@@ -1569,7 +1569,7 @@
+@@ -1569,7 +1573,7 @@
  				   cnt);
  			seq_printf(m, ": %s, state = 0x%lx, pid = %d\n",
  				   task->comm,

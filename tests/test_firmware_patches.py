@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -106,6 +107,24 @@ class FirmwarePatchTests(unittest.TestCase):
         record.unlink()
         with self.assertRaisesRegex(ValueError, 'provenance'):
             firmware.vendor_fixes(profile, self.source, check_only=True)
+
+    def test_scheduler_policies_and_priorities_are_preserved(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        base = self.source / 'package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src'
+        workers = {'sipc/sbuf.c': ('SCHED_FIFO', 10, 1),
+                   'sipc/sblock.c': ('SCHED_RR', 11, 3),
+                   'sipa/sipa_skb_send.c': ('SCHED_RR', 90, 1),
+                   'sipa/sipa_skb_recv.c': ('SCHED_RR', 92, 1)}
+        for path, (policy, priority, count) in workers.items():
+            with self.subTest(worker=path):
+                text = (base / path).read_text()
+                self.assertEqual(len(re.findall(r'\.sched_policy\s*=\s*' + policy, text)), count)
+                self.assertEqual(len(re.findall(r'\.sched_priority\s*=\s*' + str(priority) + r'\b', text)), count)
+                self.assertEqual(text.count('sched_setattr_nocheck('), count)
+                self.assertEqual(text.count('.size = sizeof(struct sched_attr)'), count)
+                self.assertNotIn('sched_setscheduler(', text)
 
 
 if __name__ == '__main__':

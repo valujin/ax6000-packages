@@ -1,0 +1,78 @@
+SPRD: use the exported Linux 6.6 scheduler API for kernel worker threads.
+
+sched_setscheduler is not exported to modules. sched_setattr_nocheck accepts
+these kernel threads while preserving their requested SCHED_RR policy and
+11 real-time priority. Initialize sched_attr.size explicitly; existing
+uapi/linux/sched/types.h includes provide its definition on Linux 6.6.
+
+Reference:
+https://github.com/torvalds/linux/blob/v6.6/kernel/sched/core.c
+
+--- a/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/sblock.c
++++ b/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/sblock.c
+@@ -866,7 +866,11 @@
+ 	int result;
+ 	u8 ch_index;
+ 	struct smsg_ipc *sipc;
+-	struct sched_param param = {.sched_priority = 11};
++	struct sched_attr param = {
++		.size = sizeof(struct sched_attr),
++		.sched_policy = SCHED_RR,
++		.sched_priority = 11,
++	};
+ 
+ 	ch_index = sipc_channel2index(channel);
+ 	if (ch_index == INVALID_CHANEL_INDEX) {
+@@ -919,7 +923,7 @@
+ 			}
+ 		}
+ 		/*set the thread as a real time thread, and its priority is 11*/
+-		sched_setscheduler(sblock->thread, SCHED_RR, &param);
++		sched_setattr_nocheck(sblock->thread, &param);
+ 		wake_up_process(sblock->thread);
+ 	}
+ 
+@@ -966,7 +970,11 @@
+ 				   rx_blk_num, rx_blk_sz,
+ 				   &sblock);
+ 	if (!result) {
+-		struct sched_param param = {.sched_priority = 11};
++		struct sched_attr param = {
++			.size = sizeof(struct sched_attr),
++			.sched_policy = SCHED_RR,
++			.sched_priority = 11,
++		};
+ 
+ 		sblock->thread = kthread_create(sblock_thread, sblock,
+ 						"sblock-%d-%d", dst, channel);
+@@ -998,7 +1006,7 @@
+ 		 * Set the thread as a real time thread, and its priority
+ 		 * is 11.
+ 		 */
+-		sched_setscheduler(sblock->thread, SCHED_RR, &param);
++		sched_setattr_nocheck(sblock->thread, &param);
+ 		wake_up_process(sblock->thread);
+ 	}
+ 
+@@ -1089,7 +1097,11 @@
+ 	struct sblock_mgr *sblock;
+ 	uint8_t idx;
+ 	int ret;
+-	struct sched_param param = {.sched_priority = 11};
++	struct sched_attr param = {
++		.size = sizeof(struct sched_attr),
++		.sched_policy = SCHED_RR,
++		.sched_priority = 11,
++	};
+ 
+ 	pr_debug("%s: dst=%d channel=%d\n", __func__, dest, channel);
+ 
+@@ -1131,7 +1143,7 @@
+ 		sblock->handler = notifier;
+ 		sblock->data = client;
+ 		/*set the thread as a real time thread, and its priority is 11*/
+-		sched_setscheduler(sblock->thread, SCHED_RR, &param);
++		sched_setattr_nocheck(sblock->thread, &param);
+ 		wake_up_process(sblock->thread);
+ 	}
+ 

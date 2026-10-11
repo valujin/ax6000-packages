@@ -1,0 +1,29 @@
+SPRD: use the exported Linux 6.6 scheduler API for kernel worker threads.
+
+sched_setscheduler is not exported to modules. sched_setattr_nocheck accepts
+these kernel threads while preserving their requested SCHED_RR policy and
+92 real-time priority. Initialize sched_attr.size explicitly; existing
+uapi/linux/sched/types.h includes provide its definition on Linux 6.6.
+
+Reference:
+https://github.com/torvalds/linux/blob/v6.6/kernel/sched/core.c
+
+--- a/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipa/sipa_skb_recv.c
++++ b/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipa/sipa_skb_recv.c
+@@ -495,10 +495,14 @@
+ {
+ 	int ret;
+ 	struct sipa_skb_receiver *receiver = (struct sipa_skb_receiver *)data;
+-	struct sched_param param = {.sched_priority = 92};
++	struct sched_attr param = {
++		.size = sizeof(struct sched_attr),
++		.sched_policy = SCHED_RR,
++		.sched_priority = 92,
++	};
+ 	unsigned long flags;
+ 
+-	sched_setscheduler(current, SCHED_RR, &param);
++	sched_setattr_nocheck(current, &param);
+ 
+ 	while (!kthread_should_stop()) {
+ 		ret = wait_event_interruptible(receiver->fill_recv_waitq,

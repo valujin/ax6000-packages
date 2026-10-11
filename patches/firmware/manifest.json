@@ -13,9 +13,9 @@
     {
       "patch": "110-sprd-pcie-linux-6.6-task-state.patch",
       "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/sbuf.c",
-      "sha256": "9b965b8e48037fde1815a1831623c901016615874186a3585370a560f282cf03",
+      "sha256": "4ccf1c722630e8dae6f29d55152e6390d95fd957649a9d20dc2b24a55925f36f",
       "before_sha256": "67c440ada670179eae0bbf3c75fbdf7b0453289c1fb56ba5737053af6f81beaf",
-      "after_sha256": "e87ae3d4d6a4e56b09c0434c95c288056f2cee1c065a9d36ba6dd23957b64191"
+      "after_sha256": "4482e1c33d09c7fef7e355a03428651c85991b5b3fea3847e86f23c0adfca64f"
     },
     {
       "patch": "120-sprd-spipe-linux-6.6-class-create.patch",
@@ -44,6 +44,27 @@
       "sha256": "d448101b6b049d7e90c7394392b4497f79c75488a04e85dea9d9252c3d1a9475",
       "before_sha256": "d448ec6c3072b77a7c85ea6b5e92618f0951e51dc2f025cf45590dc7eba29606",
       "after_sha256": "bc7ce7aea50f48691f5ec56e6ec14d94a0c551baf31e1678a45f96fcc566c9bf"
+    },
+    {
+      "patch": "130-sprd-sblock-linux-6.6-scheduler.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/sblock.c",
+      "sha256": "eaac033f6a8c81ae2b8b6b0e14b035e1fece9bc46af6ff7130db8abf2367d7b3",
+      "before_sha256": "55fa71989c2434901e41e01cff0c4ad10ba1d529ace9015f42daa8699f399121",
+      "after_sha256": "ef4de8c2b59d7c37b39887b9c96bf52c872b1765eda9a094a9c5067d0e130c4b"
+    },
+    {
+      "patch": "131-sprd-sipa-send-linux-6.6-scheduler.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipa/sipa_skb_send.c",
+      "sha256": "56c5d941b73a9ec779337ac57dde1b56a3744e9d63a816e2edfae6b7a30b4d57",
+      "before_sha256": "6ea11c85b22341a9d47967c045869cef0fc9f66c4220c62cecc46a258b17ceec",
+      "after_sha256": "6cbc2239e688a41a1a053d5ee86989537dae7e5029466f43717a8dd9078b7eb5"
+    },
+    {
+      "patch": "132-sprd-sipa-recv-linux-6.6-scheduler.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipa/sipa_skb_recv.c",
+      "sha256": "714ae49b2a5089f59b4499a46dc2acb050fb6cf8bba5bfde4356c97562d7ce88",
+      "before_sha256": "18f4253d635fd9eb12129ebeb8230c0cf9b9b5820aec8af65f5a80c156b80746",
+      "after_sha256": "cbb966286f3b48d68386c771fe4bfa68dc55baa36abc3d53c15a0c07d7f3bf09"
     }
   ]
 }

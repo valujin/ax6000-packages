@@ -1,0 +1,2 @@
+# Unified diff context lines have a leading space before tabs or blank lines.
+patches/firmware/*.patch whitespace=-blank-at-eol,-space-before-tab
