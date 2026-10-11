@@ -1,0 +1,16 @@
+SPRD SPOOL: use Linux 6.6 single-argument class_create; class identity is unchanged.
+
+Reference:
+https://github.com/torvalds/linux/blob/v6.6/include/linux/device/class.h
+
+--- a/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/spool.c
++++ b/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/spool.c
+@@ -501,7 +501,7 @@
+ {
+ 	int ret;
+ 
+-	spool_class = class_create(THIS_MODULE, "spool");
++	spool_class = class_create("spool");
+ 	if (IS_ERR(spool_class))
+ 		return PTR_ERR(spool_class);
+ #ifndef SPRD_PCIE_USE_DTS

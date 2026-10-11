@@ -16,14 +16,16 @@ SPEC.loader.exec_module(firmware)
 
 
 def vendor_source_fixture(source):
-    """The one GPL driver file from pinned ec9ef10; no full source checkout."""
+    """GPL driver files from pinned ec9ef10; no full source checkout."""
     manifest = json.loads((ROOT / 'patches/firmware/manifest.json').read_text())
-    before = gzip.decompress((ROOT / 'tests/fixtures/sprd-pcie-ep-device.c.gz').read_bytes())
-    if hashlib.sha256(before).hexdigest() != manifest['patches'][0]['before_sha256']:
-        raise ValueError('pinned driver fixture has another source hash')
-    driver = source / manifest['patches'][0]['path']
-    driver.parent.mkdir(parents=True, exist_ok=True)
-    driver.write_bytes(before)
+    for spec in manifest['patches']:
+        fixture = Path(spec['path']).name.replace('_', '-') + '.gz'
+        before = gzip.decompress((ROOT / 'tests/fixtures' / fixture).read_bytes())
+        if hashlib.sha256(before).hexdigest() != spec['before_sha256']:
+            raise ValueError('pinned driver fixture has another source hash')
+        driver = source / spec['path']
+        driver.parent.mkdir(parents=True, exist_ok=True)
+        driver.write_bytes(before)
     target = source / 'target/linux/mediatek/Makefile'
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text('KERNEL_PATCHVER:=6.6\n')
@@ -93,9 +95,11 @@ class FirmwarePatchTests(unittest.TestCase):
         firmware.vendor_fixes(profile, self.source)
         firmware.vendor_fixes(profile, self.source)
         firmware.vendor_fixes(profile, self.source, check_only=True)
-        patched = self.source / manifest['patches'][0]['path']
-        self.assertEqual(hashlib.sha256(patched.read_bytes()).hexdigest(),
-                         manifest['patches'][0]['after_sha256'])
+        for spec in manifest['patches']:
+            with self.subTest(patch=spec['patch']):
+                patched = self.source / spec['path']
+                self.assertEqual(hashlib.sha256(patched.read_bytes()).hexdigest(),
+                                 spec['after_sha256'])
         self.assertEqual((self.source / '.config').read_bytes(), original_config)
         record = self.source / 'firmware-source-patches.json'
         self.assertEqual(json.loads(record.read_text()), manifest)

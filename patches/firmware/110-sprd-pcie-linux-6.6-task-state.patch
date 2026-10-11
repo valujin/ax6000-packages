@@ -1,0 +1,30 @@
+SPRD SIPC: read the raw task state through the Linux 6.6 task_struct member.
+
+These two sites only print diagnostic task state as %lx. READ_ONCE protects the
+concurrent state read, and the unsigned long cast preserves the format contract
+for the unsigned int __state member. Existing linux/kernel.h supplies READ_ONCE.
+No scheduling behavior or kernel Kconfig symbols are changed.
+
+Reference:
+https://github.com/torvalds/linux/blob/v6.6/include/linux/sched.h
+
+--- a/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/sbuf.c
++++ b/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/sbuf.c
+@@ -1485,7 +1485,7 @@
+ 					 "%s %d: %s, state=0x%lx, pid=%d.\n",
+ 					 phead,
+ 					 cnt, task->comm,
+-					 task->state, task->pid);
++					 (unsigned long)READ_ONCE(task->__state), task->pid);
+ 				cnt++;
+ 				len = strlen(status_info);
+ 			}
+@@ -1569,7 +1569,7 @@
+ 				   cnt);
+ 			seq_printf(m, ": %s, state = 0x%lx, pid = %d\n",
+ 				   task->comm,
+-				   task->state,
++				   (unsigned long)READ_ONCE(task->__state),
+ 				   task->pid);
+ 			cnt++;
+ 		}

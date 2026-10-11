@@ -1,0 +1,16 @@
+SPRD SPIPE: use Linux 6.6 single-argument class_create; class identity is unchanged.
+
+Reference:
+https://github.com/torvalds/linux/blob/v6.6/include/linux/device/class.h
+
+--- a/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/spipe.c
++++ b/package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/spipe.c
+@@ -439,7 +439,7 @@
+ {
+ 	int ret;
+ 
+-	spipe_class = class_create(THIS_MODULE, "spipe");
++	spipe_class = class_create("spipe");
+ 	if (IS_ERR(spipe_class))
+ 		return PTR_ERR(spipe_class);
+ #ifndef SPRD_PCIE_USE_DTS

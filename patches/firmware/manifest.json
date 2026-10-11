@@ -9,6 +9,41 @@
       "sha256": "546968e67d3684a700041c74259eaff40f7f6399fca23b3abfad9fd656aef8d7",
       "before_sha256": "b5232ff6fb47d151400005cba4f7829a2408ed7848af020ac430dcfc09c7a9b3",
       "after_sha256": "d016e34eda4ac1df124233253a01d2d1aa3d58385ff553956efdf67f2e775c88"
+    },
+    {
+      "patch": "110-sprd-pcie-linux-6.6-task-state.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/sbuf.c",
+      "sha256": "9b965b8e48037fde1815a1831623c901016615874186a3585370a560f282cf03",
+      "before_sha256": "67c440ada670179eae0bbf3c75fbdf7b0453289c1fb56ba5737053af6f81beaf",
+      "after_sha256": "e87ae3d4d6a4e56b09c0434c95c288056f2cee1c065a9d36ba6dd23957b64191"
+    },
+    {
+      "patch": "120-sprd-spipe-linux-6.6-class-create.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/spipe.c",
+      "sha256": "8bd67d1b318414f4195b3694c79531db567de6ff5616536d7996c3d65789b6c6",
+      "before_sha256": "df2379487b700caf11bb4a73fa561a359d02d54f9a13bd165f0fa6aadeec9423",
+      "after_sha256": "df90628bb67b07e496953dfcb1172e7df4ca2bffbf3bd9686208c52419fb4cf3"
+    },
+    {
+      "patch": "121-sprd-spool-linux-6.6-class-create.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipc/spool.c",
+      "sha256": "d3d4d6e96e73099cd3c9ebd59c9de50e7fdc0fb9e0aa6062fdee291808967b51",
+      "before_sha256": "1c2f437ac3e53b25857c228acfa06bff2e136f50d5b01c602d9ae03765a5eaf4",
+      "after_sha256": "a2ef2a33579a9149fa5969ae5c9f7e7084ee9f7de26a6ffea338b9b03a09c3b3"
+    },
+    {
+      "patch": "122-sprd-sipa-eth-linux-6.6-netdev.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipa/sipa_eth.c",
+      "sha256": "f4d8d44888bc1f123df4e09e90e71416d600d7b4c3d6f714efecfc6213c2aee0",
+      "before_sha256": "72e29db0c89260d6bd8a29302b63e341d4a7cd587e07b060e3f27820f32da680",
+      "after_sha256": "2ad48f905467324f6df4ff9245e0211906fdd1c985900f83437b895ff278cb3c"
+    },
+    {
+      "patch": "123-sprd-sipa-dummy-linux-6.6-netdev.patch",
+      "path": "package/mtk/applications/5g-modem/quectel_SRPD_PCIE/src/sipa/sipa_dummy.c",
+      "sha256": "d448101b6b049d7e90c7394392b4497f79c75488a04e85dea9d9252c3d1a9475",
+      "before_sha256": "d448ec6c3072b77a7c85ea6b5e92618f0951e51dc2f025cf45590dc7eba29606",
+      "after_sha256": "bc7ce7aea50f48691f5ec56e6ec14d94a0c551baf31e1678a45f96fcc566c9bf"
     }
   ]
 }
