@@ -90,7 +90,7 @@ PY
 ## 2. Stock image и состав прошивки
 
 ```bash
-docker run --rm --entrypoint bash \
+docker run --rm --user "$(id -u):$(id -g)" --entrypoint bash \
   --mount "type=bind,source=$AX6000_SOURCE,target=/source,readonly" \
   --mount "type=bind,source=$AX6000_RAW,target=/raw,readonly" \
   --mount "type=bind,source=$AX6000_VERIFY,target=/verify" \
@@ -132,7 +132,7 @@ PY
 Для реального SDK `.tar.zst` текущего дерева:
 
 ```bash
-docker run --rm --entrypoint bash \
+docker run --rm --user "$(id -u):$(id -g)" --entrypoint bash \
   --mount "type=bind,source=$AX6000_REPO,target=/workspace,readonly" \
   --mount "type=bind,source=$AX6000_VERIFY,target=/verify" \
   "$AX6000_BUILDER_IMAGE" -euo pipefail -c '
@@ -166,6 +166,8 @@ print('Verified baseline packages:', len(baseline), 'frozen modules:', len(manif
 PY
 ```
 
+Свежий SDK не обязан содержать корневой `.config`: генератор сохраняет target/toolchain defaults в `Config-build.in`. Корневой `.config` создаётся при первом `make defconfig`, после чего `prepare.py --phase check-sdk` проверяет его target и baked revision. Prepared kernel `.config` внутри `build_dir` должен существовать сразу.
+
 Архив SDK нельзя считать рабочим только потому, что его hash/manifest верны. Следующий этап обязателен.
 
 ## 4. Реальная компиляция в SDK с тем же ABI
@@ -173,7 +175,7 @@ PY
 Используется отдельный fresh SDK work, локальная уже проверенная копия архива и **экспортированные** profile/lock. SDK URL может ещё не быть опубликован: build.sh использует существующий проверенный `sdk.archive`, не скачивая его повторно. Feeds берутся по тем же lock pins. Выполняется package-only build, включая новую компиляцию AWG и userland; все frozen packages добавляются при export.
 
 ```bash
-docker run --rm --cpus=4 --memory=10g --memory-swap=10g --entrypoint bash \
+docker run --rm --user "$(id -u):$(id -g)" --cpus=4 --memory=10g --memory-swap=10g --entrypoint bash \
   --mount "type=bind,source=$AX6000_REPO,target=/workspace,readonly" \
   --mount "type=bind,source=$AX6000_RAW,target=/raw,readonly" \
   --mount "type=bind,source=$AX6000_VERIFY,target=/verify" \
@@ -288,7 +290,7 @@ with tarfile.open(verify / 'raw.tar', 'w') as archive:
         assert path.is_file() or path.is_dir(), path
         archive.add(path, arcname=path.relative_to(raw).as_posix(), recursive=False)
 PY
-docker run --rm --entrypoint zstd \
+docker run --rm --user "$(id -u):$(id -g)" --entrypoint zstd \
   --mount "type=bind,source=$AX6000_VERIFY,target=/verify" \
   "$AX6000_BUILDER_IMAGE" -T1 -3 /verify/raw.tar -o /verify/raw.tar.zst
 (cd "$AX6000_VERIFY" && sha256sum raw.tar.zst > raw.tar.zst.sha256)
@@ -298,7 +300,7 @@ import os
 archive = Path(os.environ['AX6000_VERIFY']) / 'raw.tar.zst'
 assert archive.stat().st_size < 2 * 1024**3, 'Release asset must be under 2 GiB'
 PY
-docker run --rm --entrypoint python3 \
+docker run --rm --user "$(id -u):$(id -g)" --entrypoint python3 \
   --mount "type=bind,source=$AX6000_REPO,target=/workspace,readonly" \
   --mount "type=bind,source=$AX6000_VERIFY,target=/verify" \
   "$AX6000_BUILDER_IMAGE" /workspace/scripts/import-release.py \
