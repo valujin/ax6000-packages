@@ -1,0 +1,38 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build pinned host usign for signing integration
+        run: |
+          pin=f1f65026a94137c91b5466b149ef3ea3f20091e9
+          git init "$RUNNER_TEMP/usign-source"
+          git -C "$RUNNER_TEMP/usign-source" fetch --depth 1 https://github.com/openwrt/usign.git "$pin"
+          git -C "$RUNNER_TEMP/usign-source" checkout --detach FETCH_HEAD
+          [[ $(git -C "$RUNNER_TEMP/usign-source" rev-parse HEAD) == "$pin" ]]
+          bash scripts/resource-limit.sh --jobs 1 -- cmake \
+            -S "$RUNNER_TEMP/usign-source" -B "$RUNNER_TEMP/usign-build"
+          bash scripts/resource-limit.sh --jobs 1 -- cmake \
+            --build "$RUNNER_TEMP/usign-build" --parallel 1
+      - name: Python unit tests
+        env:
+          USIGN: ${{ runner.temp }}/usign-build/usign
+        run: python3 -m unittest discover -s tests -v
+      - name: Shell syntax
+        run: |
+          for script in scripts/*.sh; do
+            bash -n "$script"
+          done

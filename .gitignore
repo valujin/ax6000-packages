@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+state/
+raw/
+public/
+work/
+build/
+*.key
+*.ipk
+*.tar.zst
+*.tar.xz
+.build.lock
