@@ -1,4 +1,5 @@
 """Compatibility patches must preserve source identity and never change kernel config."""
+import ctypes
 import gzip
 import hashlib
 import importlib.util
@@ -147,6 +148,62 @@ class FirmwarePatchTests(unittest.TestCase):
         self.assertIn('FILES:=$(PKG_BUILD_DIR)/fibo_mhi.ko', text)
         self.assertIn('AUTOLOAD:=$(call AutoLoad,90,fibo_mhi)', text)
         self.assertIn('define KernelPackage/pcie_mhi_fb\n', text)
+
+    def test_fibocom_legacy_termios_copy_preserves_extended_speeds_and_fault_atomicity(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        target = self.source / 'package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_uci.c'
+        text = target.read_text()
+        ioctl = text[text.index('static long mhi_uci_ioctl('):text.index('static int mhi_uci_release(')]
+        getter = ioctl[ioctl.index('case TCGETS:'):ioctl.index('case TCSETSF:')]
+        setter = ioctl[ioctl.index('case TCSETSF:'):ioctl.index('case TIOCMSET:')]
+        self.assertRegex(getter, r'copy_to_user\(\(struct termios __user \*\)arg,\s*'
+                         r'&uci_dev->termios, sizeof\(struct termios\)\) \? -EFAULT : 0;')
+        self.assertRegex(setter, r'struct ktermios termios = uci_dev->termios;\s*'
+                         r'if \(copy_from_user\(&termios, \(struct termios __user \*\)arg,\s*'
+                         r'sizeof\(struct termios\)\)\) \{\s*ret = -EFAULT;\s*break;\s*\}\s*'
+                         r'uci_dev->termios = termios;\s*ret = 0;')
+        self.assertNotIn('return', setter, 'copy faults must reach the shared mutex unlock')
+        self.assertRegex(ioctl, r'mutex_unlock\(&uci_dev->mutex\);\s*return ret;')
+        self.assertNotIn('termios_to_', ioctl, 'module cannot call unexported tty helpers')
+        self.assertNotIn('case TCGETS2:', ioctl, 'legacy ioctl must not copy the extended ABI')
+        self.assertNotIn('sizeof(struct ktermios)', getter + setter)
+
+        # Exact asm-generic UAPI layout used by ARM64 Linux 6.6. Speed fields
+        # are outside the legacy prefix, so neither getter nor setter copies them.
+        fields = [(name, ctypes.c_uint32) for name in
+                  ('c_iflag', 'c_oflag', 'c_cflag', 'c_lflag')]
+        fields += [('c_line', ctypes.c_uint8), ('c_cc', ctypes.c_uint8 * 19)]
+        class Termios(ctypes.Structure):
+            _fields_ = fields
+        class Ktermios(ctypes.Structure):
+            _fields_ = fields + [('c_ispeed', ctypes.c_uint32), ('c_ospeed', ctypes.c_uint32)]
+        self.assertEqual(ctypes.sizeof(Termios), 36)
+        self.assertEqual(ctypes.sizeof(Ktermios), 44)
+        self.assertEqual(Ktermios.c_ispeed.offset, 36)
+        self.assertEqual(Ktermios.c_ospeed.offset, 40)
+        for name, _ in fields:
+            self.assertEqual(getattr(Termios, name).offset, getattr(Ktermios, name).offset)
+        current = Ktermios(c_ispeed=115200, c_ospeed=921600)
+        legacy = bytes(range(ctypes.sizeof(Termios)))
+        candidate = Ktermios.from_buffer_copy(bytes(current))
+        ctypes.memmove(ctypes.addressof(candidate), legacy, len(legacy))
+        self.assertEqual(bytes(candidate)[:36], legacy)
+        self.assertEqual((candidate.c_ispeed, candidate.c_ospeed), (115200, 921600))
+        self.assertEqual(bytes(current)[:36], bytes(36), 'temporary copy must not mutate stored state')
+
+    def test_fibocom_nonblocking_read_and_write_use_open_flags(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        target = self.source / 'package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_uci.c'
+        text = target.read_text()
+        self.assertEqual(text.count('file->f_flags & O_NONBLOCK'), 2)
+        self.assertNotIn('FMODE_NDELAY', text)
+        self.assertRegex(text, r'if \(mhi_get_no_free_descriptors\(mhi_dev, DMA_TO_DEVICE\) == 0 '
+                         r'&& \(file->f_flags & O_NONBLOCK\)\)\s*break;')
+        self.assertRegex(text, r'if \(file->f_flags & O_NONBLOCK\)\s*return -EAGAIN;')
 
     def test_gobi_and_qmi_use_native_linux66_network_apis(self):
         vendor_source_fixture(self.source)

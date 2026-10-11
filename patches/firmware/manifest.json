@@ -76,9 +76,9 @@
     {
       "patch": "141-fibocom-mhi-linux-6.6-class-create.patch",
       "path": "package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_uci.c",
-      "sha256": "7a0b0354857074a4e4b4b59e063464a39bc8158278693757c2465a9fffd48a36",
+      "sha256": "bfe774ccb5ffedef75b7cad6e787316d4915079d1380b70c00f5411666f1fb2e",
       "before_sha256": "44ec4f0f6c58810da80bd0bb41a87307a70b9850215f0c60657b066c9dde81f0",
-      "after_sha256": "d59b4e1e993288324bd7234b4c08427f65472e7e625e4c7176e0cca7fe452c6c"
+      "after_sha256": "86f0b81cd8eb840024cadbcdd63430866b99f76fcb6d72de0bdc1229f4cbfc32"
     },
     {
       "patch": "142-fibocom-mhi-linux-6.6-netdev.patch",

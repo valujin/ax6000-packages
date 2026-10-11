@@ -1,13 +1,75 @@
-Fibocom MHI UCI: use Linux 6.6 single-argument class_create.
+Fibocom MHI UCI: use exported Linux 6.6 interfaces and ARM64 legacy termios ABI.
 
-Keep the existing class name and registration sequence unchanged.
+Keep the class name and registration sequence. The unexported tty conversion
+helpers copy only the 36-byte legacy termios prefix on this ARM64 kernel;
+copy that prefix locally, leaving both extended speed fields unchanged.
+Report -EFAULT on a failed copy and commit setters only after full success.
+Check nonblocking open flags in f_flags for both read and write paths.
 
-Reference:
+References:
 https://github.com/torvalds/linux/blob/v6.6/include/linux/device/class.h
+https://github.com/torvalds/linux/blob/v6.6/drivers/tty/tty_ioctl.c
+https://github.com/torvalds/linux/blob/v6.6/include/uapi/asm-generic/termbits.h
+https://github.com/torvalds/linux/blob/v6.6/include/uapi/asm-generic/fcntl.h
 
 --- a/package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_uci.c
 +++ b/package/mtk/applications/5g-modem/fibocom_MHI/src/devices/mhi_uci.c
-@@ -759,7 +759,7 @@
+@@ -143,20 +143,26 @@
+ 	if (uci_dev->enabled) {
+ 		switch (cmd) {
+ 		case TCGETS:
+-#ifndef TCGETS2
+-			ret = kernel_termios_to_user_termios((struct termios __user *)arg, &uci_dev->termios);
+-#else
+-			ret = kernel_termios_to_user_termios_1((struct termios __user *)arg, &uci_dev->termios);
+-#endif
++			/* ARM64 Linux 6.6: legacy termios is the ktermios prefix;
++			 * c_ispeed/c_ospeed belong only to the extended ABI.
++			 */
++			ret = copy_to_user((struct termios __user *)arg,
++					   &uci_dev->termios, sizeof(struct termios)) ? -EFAULT : 0;
+ 		break;
+ 
+ 		case TCSETSF:
+ 		case TCSETS:
+-#ifndef TCGETS2
+-			ret = user_termios_to_kernel_termios(&uci_dev->termios, (struct termios __user *)arg);
+-#else
+-			ret = user_termios_to_kernel_termios_1(&uci_dev->termios, (struct termios __user *)arg);
+-#endif
++		{
++			struct ktermios termios = uci_dev->termios;
++
++			if (copy_from_user(&termios, (struct termios __user *)arg,
++					   sizeof(struct termios))) {
++				ret = -EFAULT;
++				break;
++			}
++			uci_dev->termios = termios;
++			ret = 0;
++		}
+ 		break;
+ 
+ 		case TIOCMSET:
+@@ -313,7 +319,7 @@
+ 
+ 		spin_unlock_bh(&uci_chan->lock);
+ 
+- 		if (mhi_get_no_free_descriptors(mhi_dev, DMA_TO_DEVICE) == 0 && (file->f_mode & FMODE_NDELAY))
++ 		if (mhi_get_no_free_descriptors(mhi_dev, DMA_TO_DEVICE) == 0 && (file->f_flags & O_NONBLOCK))
+ 			break;
+ 
+ 		/* wait for free descriptors */
+@@ -400,7 +406,7 @@
+ 
+ 		spin_unlock_bh(&uci_chan->lock);
+ 		
+-		if (file->f_mode & FMODE_NDELAY)
++		if (file->f_flags & O_NONBLOCK)
+ 			return -EAGAIN;
+ 		
+ 		ret = wait_event_interruptible(uci_chan->wq,
+@@ -759,7 +765,7 @@
  		return ret;
  
  	mhi_uci_drv.major = ret;
