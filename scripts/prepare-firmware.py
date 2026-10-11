@@ -178,7 +178,7 @@ def runtime_dependency_closure(controls, roots):
 
 
 def augment_sdk(profile, source, archive, controls, abi):
-    """Freeze modules and their runtime dependencies; refresh requested external packages."""
+    """Keep the full successful package inventory; refresh requested external packages."""
     match = prepare.KERNEL_PACKAGE.fullmatch(abi)
     version, vermagic, _ = match.groups()
     trees = [path.parent for path in (source / "build_dir").glob("target-*/linux-*/linux-*/.vermagic")
@@ -193,7 +193,13 @@ def augment_sdk(profile, source, archive, controls, abi):
                      if control.get("Package", "").startswith("kmod-")}
     refreshed = set(profile["packages"]) - core
     frozen = built_modules - refreshed
-    frozen_packages = runtime_dependency_closure(controls, frozen | {"kernel"}) - refreshed
+    protected = {"kernel", "libc", "base-files", "busybox", "opkg"}
+    built_names = {control["Package"] for _, control in controls}
+    retained = (built_names - refreshed - protected) | {"kernel"}
+    # Keep every offered full-build package, including vendor GUI/tools and
+    # auto-selected translations. Protected identities are retained only when
+    # required by this closure; the publisher never offers them as upgrades.
+    frozen_packages = runtime_dependency_closure(controls, retained) - refreshed
     baseline = [(path, control) for path, control in controls
                 if control.get("Package") in frozen_packages]
     prepare.require(bool(core), "source metadata did not identify any core kernel modules for SDK baseline")

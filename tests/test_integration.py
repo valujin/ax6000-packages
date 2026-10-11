@@ -85,6 +85,9 @@ class FirmwareExportIntegration(unittest.TestCase):
             control_ipk(packages / 'batctl-default.ipk', 'batctl-default', provides='batctl (= 1-r1)')
             control_ipk(packages / 'libc.ipk', 'libc')
             control_ipk(packages / 'fw-helper-live.ipk', 'fw-helper-live', depends='libfirmware-fixture')
+            control_ipk(packages / 'vendor-luci-fixture.ipk', 'vendor-luci-fixture', depends='libvendor-gui')
+            control_ipk(packages / 'libvendor-gui.ipk', 'libvendor-gui')
+            control_ipk(packages / 'base-files.ipk', 'base-files')
             (target / 'immortalwrt-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin').write_bytes(b'image')
             sdk = target / 'immortalwrt-sdk-mediatek-filogic.tar.xz'
             kernel_relative = Path('build_dir/target-aarch64_cortex-a53_musl/linux-mediatek_filogic/linux-6.6.133')
@@ -150,7 +153,9 @@ class FirmwareExportIntegration(unittest.TestCase):
                 self.assertEqual(baseline['refreshed_kmods'], ['kmod-amneziawg'])
                 self.assertEqual(baseline['frozen_packages'],
                                  ['batctl-default', 'firmware-fixture', 'kernel', 'kmod-ipt-geoip',
-                                  'kmod-wireguard', 'libc', 'libfirmware-fixture'])
+                                  'kmod-wireguard', 'libc', 'libfirmware-fixture', 'libvendor-gui',
+                                  'vendor-luci-fixture'])
+                self.assertNotIn('base-files', baseline['frozen_packages'])
                 self.assertNotIn('sdk/ax6000-baseline/ipks/kmod-amneziawg.ipk', archive.getnames())
                 self.assertNotIn('sdk/ax6000-baseline/ipks/fw-helper-live.ipk', archive.getnames())
                 self.assertEqual(archive.extractfile('sdk/ax6000-baseline/ipks/kmod-wireguard.ipk').read(),
@@ -190,6 +195,14 @@ class FirmwareExportIntegration(unittest.TestCase):
             self.assertTrue((daily_output / 'bin/packages/libfirmware-fixture-new.ipk').is_file())
             self.assertFalse((daily_output / 'bin/packages/libfirmware-fixture.ipk').exists())
             self.assertTrue((daily_output / 'bin/packages/fw-helper-live-new.ipk').is_file())
+            read_control = runpy.run_path(str(ROOT / 'scripts/publish.py'))['read_control']
+            protected = {'kernel', 'libc', 'base-files', 'busybox', 'opkg'}
+            original_names = {read_control(path)['Package'] for path in output.rglob('*.ipk')} - protected
+            daily_names = {read_control(path)['Package'] for path in daily_output.rglob('*.ipk')} - protected
+            self.assertEqual(original_names, daily_names)
+            for name in ('vendor-luci-fixture', 'libvendor-gui'):
+                self.assertEqual((daily_output / f'bin/packages/{name}.ipk').read_bytes(),
+                                 (packages / f'{name}.ipk').read_bytes())
 
 
 @unittest.skipUnless(USIGN, 'real OpenWrt host usign unavailable; set USIGN to run signing integration')

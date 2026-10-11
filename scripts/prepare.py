@@ -143,7 +143,6 @@ PKG_SOURCE_URL:=https://pkgs.tailscale.com/stable
 PKG_HASH:=""" + override["sha256"] + """
 PKG_BUILD_DIR:=$(BUILD_DIR)/tailscale_$(PKG_VERSION)_arm64
 PKG_LICENSE:=BSD-3-Clause
-PKG_LICENSE_FILES:=LICENSE
 
 include $(INCLUDE_DIR)/package.mk
 
