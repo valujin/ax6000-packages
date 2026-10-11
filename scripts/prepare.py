@@ -330,6 +330,10 @@ def baseline_packages(profile, sdk):
     frozen = manifest.get("frozen_kmods", manifest.get("core_kmods", []))
     require(isinstance(frozen, list) and all(isinstance(name, str) and name.startswith("kmod-") for name in frozen)
             and len(frozen) == len(set(frozen)), "invalid frozen module baseline list")
+    frozen_packages = manifest.get("frozen_packages", ["kernel"] + frozen)
+    require(isinstance(frozen_packages, list) and all(isinstance(name, str) and NAME.fullmatch(name)
+            for name in frozen_packages) and len(frozen_packages) == len(set(frozen_packages))
+            and set(frozen) <= set(frozen_packages), "invalid frozen package baseline list")
     result = {}
     for entry in manifest["files"]:
         relative = PurePosixPath(entry["path"])
@@ -347,10 +351,12 @@ def baseline_packages(profile, sdk):
         if control["Package"] == "kernel":
             require(control["Version"] == profile["firmware"]["kernel_version"], "baseline kernel identity version mismatch")
         require(control["Package"] not in result, "duplicate baseline package")
-        require(control["Package"] == "kernel" or control["Package"] in frozen,
-                "baseline must contain only frozen modules and kernel identity")
+        require(control["Package"] in frozen_packages,
+                "baseline contains a package outside the frozen allowlist")
         result[control["Package"]] = path
     require(set(frozen) <= result.keys(), "baseline manifest omits listed frozen modules")
+    if "frozen_packages" in manifest:
+        require(set(frozen_packages) == result.keys(), "baseline manifest omits listed frozen packages")
     return result
 
 
@@ -361,7 +367,10 @@ def select_packages(profile, sdk):
     missing = sorted(requested - available - baseline.keys())
     require(not missing, "requested packages absent from pinned SDK feeds: " + ", ".join(missing))
     kmods = sorted(name for name in available if name.startswith("kmod-")) if profile.get("all_kmods", True) else []
-    selected = sorted((requested | set(kmods)) - baseline.keys())
+    # Frozen dependency packages remain available as fallback, but requested
+    # userland packages must still refresh. Modules keep the exact prepared ABI.
+    frozen_kmods = {name for name in baseline if name.startswith("kmod-")}
+    selected = sorted((requested | set(kmods)) - frozen_kmods - {"kernel"})
     config = sdk / ".config"
     text = config.read_text()
     language_symbols = luci_language_symbols(profile, sdk, "m")

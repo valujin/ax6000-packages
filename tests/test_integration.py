@@ -5,8 +5,10 @@ import io
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -18,10 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 USIGN = os.environ.get('USIGN') or shutil.which('usign')
 
 
-def kernel_ipk(path, version):
+def control_ipk(path, name, version='1-r1', depends='', provides=''):
     data = io.BytesIO()
-    control = (f'Package: kernel\nVersion: {version}\n'
-               'Architecture: aarch64_cortex-a53\nDescription: kernel fixture\n').encode()
+    control = (f'Package: {name}\nVersion: {version}\n'
+               'Architecture: aarch64_cortex-a53\nDescription: fixture\n'
+               f'Depends: {depends}\nProvides: {provides}\n').encode()
     with tarfile.open(fileobj=data, mode='w:gz') as archive:
         member = tarfile.TarInfo('./control')
         member.size = len(control)
@@ -32,12 +35,29 @@ def kernel_ipk(path, version):
         archive.addfile(member, io.BytesIO(data.getvalue()))
 
 
+def kernel_ipk(path, version):
+    control_ipk(path, 'kernel', version)
+
+
+class DependencyClosureTest(unittest.TestCase):
+    def test_missing_runtime_provider_refuses_incomplete_snapshot(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        try:
+            closure = runpy.run_path(str(ROOT / 'scripts/prepare-firmware.py'))['runtime_dependency_closure']
+        finally:
+            sys.path.pop(0)
+        controls = [(Path('module.ipk'), {'Package': 'kmod-fixture',
+                                        'Depends': 'unbuilt-provider (>= 2) | missing-alternative'})]
+        with self.assertRaisesRegex(ValueError, 'kmod-fixture -> missing-alternative.*unbuilt-provider'):
+            closure(controls, {'kmod-fixture'})
+
+
 class FirmwareExportIntegration(unittest.TestCase):
     def test_exported_profile_lock_and_sdk_url_describe_actual_build(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
-            profile['packages'] = ['kmod-wireguard', 'kmod-amneziawg']
+            profile['packages'] = ['kmod-wireguard', 'kmod-amneziawg', 'fw-helper-live']
             profile['image_packages'] = []
             profile['build_source']['publication_url'] = 'https://example.com/packages'
             profile_path = root / 'profile.json'
@@ -56,8 +76,15 @@ class FirmwareExportIntegration(unittest.TestCase):
             abi = '6.6.133~' + 'a' * 32 + '-r1'
             kernel_ipk(packages / 'kernel.ipk', abi)
             ipk(packages / 'kmod-wireguard.ipk', kernel=abi)
-            ipk(packages / 'kmod-ipt-geoip.ipk', name='kmod-ipt-geoip', kernel=abi)
+            control_ipk(packages / 'kmod-ipt-geoip.ipk', 'kmod-ipt-geoip',
+                        depends=f'kernel (= {abi}), firmware-fixture, batctl (>= 1), fw-helper-live')
             ipk(packages / 'kmod-amneziawg.ipk', name='kmod-amneziawg', kernel=abi)
+            control_ipk(packages / 'firmware-fixture.ipk', 'firmware-fixture',
+                        depends='libfirmware-fixture (>= 1) | alternative-library')
+            control_ipk(packages / 'libfirmware-fixture.ipk', 'libfirmware-fixture', depends='libc')
+            control_ipk(packages / 'batctl-default.ipk', 'batctl-default', provides='batctl (= 1-r1)')
+            control_ipk(packages / 'libc.ipk', 'libc')
+            control_ipk(packages / 'fw-helper-live.ipk', 'fw-helper-live', depends='libfirmware-fixture')
             (target / 'immortalwrt-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin').write_bytes(b'image')
             sdk = target / 'immortalwrt-sdk-mediatek-filogic.tar.xz'
             kernel_relative = Path('build_dir/target-aarch64_cortex-a53_musl/linux-mediatek_filogic/linux-6.6.133')
@@ -108,6 +135,10 @@ class FirmwareExportIntegration(unittest.TestCase):
             self.assertEqual(generated_lock['profile_sha256'],
                              hashlib.sha256((output / 'profile.json').read_bytes()).hexdigest())
             self.assertEqual(generated['sdk']['sha256'], hashlib.sha256(sdk.read_bytes()).hexdigest())
+            self.assertEqual(generated['build_id'],
+                             profile['id'] + '-' + profile['firmware']['commit'][:12] + '-'
+                             + generated['sdk']['sha256'][:12])
+            self.assertEqual(manifest['build_id'], generated['build_id'])
             self.assertEqual(urlsplit(generated['sdk']['url']).path,
                              '/packages/firmware/' + manifest['build_id'] + '/' + sdk.name)
             self.assertFalse(generated['all_kmods'])
@@ -117,7 +148,11 @@ class FirmwareExportIntegration(unittest.TestCase):
                 self.assertEqual(baseline['kernel_version'], abi)
                 self.assertEqual(baseline['frozen_kmods'], ['kmod-ipt-geoip', 'kmod-wireguard'])
                 self.assertEqual(baseline['refreshed_kmods'], ['kmod-amneziawg'])
+                self.assertEqual(baseline['frozen_packages'],
+                                 ['batctl-default', 'firmware-fixture', 'kernel', 'kmod-ipt-geoip',
+                                  'kmod-wireguard', 'libc', 'libfirmware-fixture'])
                 self.assertNotIn('sdk/ax6000-baseline/ipks/kmod-amneziawg.ipk', archive.getnames())
+                self.assertNotIn('sdk/ax6000-baseline/ipks/fw-helper-live.ipk', archive.getnames())
                 self.assertEqual(archive.extractfile('sdk/ax6000-baseline/ipks/kmod-wireguard.ipk').read(),
                                  (packages / 'kmod-wireguard.ipk').read_bytes())
                 for name, data in kernel_files.items():
@@ -130,6 +165,9 @@ class FirmwareExportIntegration(unittest.TestCase):
             daily_packages = daily_sdk / 'bin/packages'
             daily_packages.mkdir(parents=True)
             ipk(daily_packages / 'amneziawg-refreshed.ipk', name='kmod-amneziawg', kernel=abi)
+            control_ipk(daily_packages / 'fw-helper-live-new.ipk', 'fw-helper-live', '2-r1',
+                        depends='libfirmware-fixture')
+            control_ipk(daily_packages / 'libfirmware-fixture-new.ipk', 'libfirmware-fixture', '2-r1')
             daily_signer = daily_sdk / 'staging_dir/host/bin/usign'
             daily_signer.parent.mkdir(parents=True)
             shutil.copy2(signer, daily_signer)
@@ -146,6 +184,12 @@ class FirmwareExportIntegration(unittest.TestCase):
             self.assertEqual((daily_output / 'bin/packages/amneziawg-refreshed.ipk').read_bytes(),
                              (daily_packages / 'amneziawg-refreshed.ipk').read_bytes())
             self.assertFalse((daily_output / 'bin/packages/kmod-amneziawg.ipk').exists())
+            for name in ('firmware-fixture', 'batctl-default', 'libc'):
+                self.assertEqual((daily_output / f'bin/packages/{name}.ipk').read_bytes(),
+                                 (packages / f'{name}.ipk').read_bytes())
+            self.assertTrue((daily_output / 'bin/packages/libfirmware-fixture-new.ipk').is_file())
+            self.assertFalse((daily_output / 'bin/packages/libfirmware-fixture.ipk').exists())
+            self.assertTrue((daily_output / 'bin/packages/fw-helper-live-new.ipk').is_file())
 
 
 @unittest.skipUnless(USIGN, 'real OpenWrt host usign unavailable; set USIGN to run signing integration')

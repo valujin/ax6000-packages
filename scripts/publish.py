@@ -12,11 +12,27 @@ import re
 import shutil
 import subprocess
 import tarfile
+from urllib.parse import urlsplit
 
 
 def sha256_file(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def firmware_build_id(profile):
+    commit = profile['firmware']['commit']
+    if not re.fullmatch(r'[a-fA-F0-9]{40}', commit):
+        raise ValueError('Invalid firmware source commit')
+    prefix = profile['id'] + '-' + commit[:12]
+    build_id = profile.get('build_id', prefix)
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,127}', build_id):
+        raise ValueError('Invalid firmware build id')
+    if 'build_id' in profile:
+        digest = profile.get('sdk', {}).get('sha256', '')
+        if not re.fullmatch(r'[a-f0-9]{64}', digest) or build_id != prefix + '-' + digest[:12]:
+            raise ValueError('Firmware build id must identify the exact SDK checksum')
+    return build_id
 
 
 def read_control(path):
@@ -115,13 +131,18 @@ def stage_firmware(raw, output, profile):
     targets = Path(raw) / 'bin' / 'targets' / profile['firmware']['target'] / profile['firmware']['subtarget']
     if not targets.is_dir():
         return None
-    build_id = profile['id'] + '-' + profile['firmware']['commit'][:12]
+    build_id = firmware_build_id(profile)
     destination = Path(output) / 'firmware' / build_id
     files = [p for p in targets.iterdir() if p.is_file() and
              (p.name.endswith(('.bin', '.itb', '.tar.zst', '.tar.xz', '.manifest', '.json')) or
               p.name in ('config.buildinfo', 'feeds.buildinfo', 'version.buildinfo', 'sha256sums'))]
     if not files:
         return None
+    sdk = profile.get('sdk', {})
+    sdk_name = Path(urlsplit(sdk.get('url', '')).path).name
+    for source in files:
+        if source.name == sdk_name and sha256_file(source) != sdk.get('sha256'):
+            raise ValueError('Firmware SDK archive does not match the published profile checksum')
     destination.mkdir(parents=True)
     for source in files:
         shutil.copy2(source, destination / source.name)

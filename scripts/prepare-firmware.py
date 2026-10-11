@@ -133,8 +133,52 @@ def core_kmod_names(source):
     return result
 
 
+def dependency_groups(value, label):
+    """Read opkg comma groups and alternatives, keeping version syntax intact."""
+    if not value.strip():
+        return []
+    result = []
+    for group in value.split(","):
+        names = set()
+        for alternative in group.split("|"):
+            match = re.fullmatch(r"\s*([A-Za-z0-9][A-Za-z0-9_.+\-]*)"
+                                 r"(?:\s*\((?:>=|<=|>>|<<|!=|=|>|<)\s*[^\s()]+\))?\s*", alternative)
+            prepare.require(match is not None, f"invalid {label}: {alternative!r}")
+            names.add(match[1])
+        result.append(names)
+    return result
+
+
+def runtime_dependency_closure(controls, roots):
+    """Preserve built providers conservatively; final IPK controls are authoritative."""
+    packages = {}
+    providers = {}
+    for _, control in controls:
+        name = control["Package"]
+        prepare.require(name not in packages, f"duplicate built package in SDK dependency baseline: {name}")
+        packages[name] = control
+        provided = {name}
+        for group in dependency_groups(control.get("Provides", ""), f"Provides for {name}"):
+            provided.update(group)
+        for virtual in provided:
+            providers.setdefault(virtual, set()).add(name)
+    closure, pending = set(), set(roots)
+    while pending:
+        name = pending.pop()
+        if name in closure:
+            continue
+        prepare.require(name in packages, f"missing built baseline package: {name}")
+        closure.add(name)
+        for group in dependency_groups(packages[name].get("Depends", ""), f"Depends for {name}"):
+            candidates = set().union(*(providers.get(dependency, set()) for dependency in group))
+            prepare.require(bool(candidates), f"built module baseline dependency unavailable: {name} -> "
+                            + " | ".join(sorted(group)))
+            pending.update(candidates - closure)
+    return closure
+
+
 def augment_sdk(profile, source, archive, controls, abi):
-    """Freeze every built module except requested external modules refreshed daily."""
+    """Freeze modules and their runtime dependencies; refresh requested external packages."""
     match = prepare.KERNEL_PACKAGE.fullmatch(abi)
     version, vermagic, _ = match.groups()
     trees = [path.parent for path in (source / "build_dir").glob("target-*/linux-*/linux-*/.vermagic")
@@ -147,10 +191,11 @@ def augment_sdk(profile, source, archive, controls, abi):
     prepare.require("kmod-amneziawg" not in core, "external AmneziaWG must be rebuilt rather than frozen as a core module")
     built_modules = {control["Package"] for _, control in controls
                      if control.get("Package", "").startswith("kmod-")}
-    refreshed = {name for name in profile["packages"] if name.startswith("kmod-")} - core
+    refreshed = set(profile["packages"]) - core
     frozen = built_modules - refreshed
+    frozen_packages = runtime_dependency_closure(controls, frozen | {"kernel"}) - refreshed
     baseline = [(path, control) for path, control in controls
-                if control.get("Package") == "kernel" or control.get("Package") in frozen]
+                if control.get("Package") in frozen_packages]
     prepare.require(bool(core), "source metadata did not identify any core kernel modules for SDK baseline")
     with tempfile.TemporaryDirectory(prefix="ax6000-sdk-", dir=source.parent) as temporary:
         temporary = Path(temporary)
@@ -189,7 +234,8 @@ def augment_sdk(profile, source, archive, controls, abi):
         (snapshot / "manifest.json").write_text(json.dumps(
             {"schema_version": 1, "source_commit": profile["firmware"]["commit"],
              "kernel_version": abi, "architecture": profile["firmware"]["architecture"],
-             "frozen_kmods": sorted(frozen), "refreshed_kmods": sorted(refreshed & built_modules), "files": files},
+             "frozen_kmods": sorted(frozen), "frozen_packages": sorted(frozen_packages),
+             "refreshed_kmods": sorted(refreshed & built_modules), "files": files},
             indent=2, sort_keys=True) + "\n")
         # Carry immutable images and build metadata into daily SDK exports. The SDK
         # itself is added from the verified download later, avoiding archive recursion.
@@ -253,12 +299,13 @@ def export(profile, lock, source, output):
     generated["all_kmods"] = False
     generated["feeds"].insert(0, {"name": "base", "url": profile["firmware"]["repository"],
                                   "commit": profile["firmware"]["commit"]})
-    build_id = f"{profile['id']}-{profile['firmware']['commit'][:12]}"
+    with sdks[0].open("rb") as stream:
+        sdk_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+    build_id = f"{profile['id']}-{profile['firmware']['commit'][:12]}-{sdk_hash[:12]}"
+    generated["build_id"] = build_id
     site_url = profile["build_source"].get("publication_url", "https://valujin.github.io/ax6000-packages")
     url_base = site_url.rstrip("/") + "/firmware/" + build_id
     prepare.https_url(url_base, "firmware publication URL")
-    with sdks[0].open("rb") as stream:
-        sdk_hash = hashlib.file_digest(stream, "sha256").hexdigest()
     generated["sdk"] = {"url": url_base.rstrip("/") + "/" + sdks[0].name, "sha256": sdk_hash}
     output.mkdir(parents=True)
     shutil.copytree(source / "bin", output / "bin", symlinks=True)
