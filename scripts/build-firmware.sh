@@ -85,6 +85,7 @@ if actual != expected:
     raise SystemExit('build-firmware: resume profile/lock differ from prepared build inputs')
 PY
     [[ $(git -C "$source_dir" rev-parse HEAD) == "$commit" ]] || fail 'resume source HEAD differs from pinned firmware commit'
+    "${prepare[@]}" --phase repository-files
     "${prepare[@]}" --phase check-feeds
     "${prepare[@]}" --phase verify
     cd -- "$source_dir"

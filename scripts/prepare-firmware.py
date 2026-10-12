@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prepare a pinned AX6000 stock-layout firmware build and export its actual ABI."""
 import argparse
+import base64
 import copy
 import hashlib
 import json
@@ -48,6 +49,7 @@ def validate(profile, lock):
 
 def configure(profile, lock, source):
     validate(profile, lock)
+    repository_files(source)
     pins = prepare.feed_pins(profile, lock)
     (source / "feeds.conf").write_text("".join(
         f"src-git {feed['name']} {feed['url']}^{pins[feed['name']]}\n" for feed in profile["feeds"]))
@@ -65,6 +67,46 @@ def configure(profile, lock, source):
                "# CONFIG_ALL is not set\n# CONFIG_ALL_NONSHARED is not set\n"
                "CONFIG_SIGNED_PACKAGES=y\nCONFIG_SIGNATURE_CHECK=y\n")
     (source / ".config").write_text(config)
+
+
+def repository_files(source, check_only=False):
+    """Override moving official feeds; connect the verified feed with install-feed.sh."""
+    public = (Path(__file__).resolve().parents[1] / "keys/repository.pub").read_bytes()
+    lines = public.decode("ascii").splitlines()
+    prepare.require(len(lines) == 2 and lines[0].startswith("untrusted comment:"), "invalid repository public key")
+    data = base64.b64decode(lines[1], validate=True)
+    prepare.require(len(data) == 42 and data[:2] == b"Ed", "invalid repository public key")
+    fingerprint = data[2:10].hex()
+    installer = (Path(__file__).resolve().parent / "install-feed.sh").read_bytes()
+    prepare.require(b"expected_fingerprint=" + fingerprint.encode() + b"\n" in installer,
+                    "bundled installer signing key differs from repository key")
+    files = {
+        "files/etc/opkg/distfeeds.conf":
+            b"# Packages for this firmware require its exact kernel ABI.\n"
+            b"# Connect the signed matching repository with ax6000-install-feed.\n"
+            b"# Moving official snapshot feeds are deliberately not configured.\n",
+        "files/etc/opkg/keys/" + fingerprint: public,
+        "files/usr/sbin/ax6000-install-feed": installer,
+    }
+    for relative, content in files.items():
+        target = source / relative
+        prepare.require(target.resolve().is_relative_to(source.resolve()) and not target.is_symlink()
+                        and not any(parent.is_symlink() for parent in target.parents
+                                    if parent != source and parent.is_relative_to(source)),
+                        f"repository overlay is outside source or a symlink: {relative}")
+        prepare.require(not target.exists() or (target.is_file() and target.read_bytes() == content),
+                        f"repository overlay differs from reviewed defaults: {relative}")
+        mode = 0o755 if relative == "files/usr/sbin/ax6000-install-feed" else 0o644
+        prepare.require(not target.exists() or target.stat().st_mode & 0o777 == mode,
+                        f"repository overlay permissions differ: {relative}")
+        prepare.require(not check_only or target.is_file(), f"repository overlay is missing: {relative}")
+    if not check_only:
+        for relative, content in files.items():
+            target = source / relative
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+                target.chmod(0o755 if relative == "files/usr/sbin/ax6000-install-feed" else 0o644)
 
 
 def set_symbols(config, values):
@@ -169,6 +211,7 @@ def select(profile, source):
 
 
 def verify(profile, source):
+    repository_files(source, check_only=True)
     patches = vendor_fixes(profile, source, check_only=True)
     report = prepare.verify_selection(profile, source)
     prepare.require(report.get("source_patches") == patches, "selection report omits vendor patch provenance")
@@ -437,7 +480,7 @@ def main():
     parser.add_argument("--lock", required=True, type=Path)
     parser.add_argument("--source-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--phase", choices=("validate", "configure", "check-feeds", "vendor-fixes", "overrides", "select", "verify", "export"), default="validate")
+    parser.add_argument("--phase", choices=("validate", "configure", "repository-files", "check-feeds", "vendor-fixes", "overrides", "select", "verify", "export"), default="validate")
     args = parser.parse_args()
     try:
         profile, lock = json.loads(args.profile.read_text()), json.loads(args.lock.read_text())
@@ -447,11 +490,13 @@ def main():
             return
         prepare.require(args.source_dir is not None and args.source_dir.is_dir(), "--source-dir is required")
         if args.phase == "export":
+            repository_files(args.source_dir, check_only=True)
             vendor_fixes(profile, args.source_dir, check_only=True)
             prepare.require(args.output_dir is not None, "--output-dir is required")
             export(profile, lock, args.source_dir, args.output_dir)
         else:
             actions = {"configure": lambda: configure(profile, lock, args.source_dir),
+                       "repository-files": lambda: repository_files(args.source_dir),
                        "check-feeds": lambda: prepare.verify_feeds(profile, lock, args.source_dir),
                        "vendor-fixes": lambda: vendor_fixes(profile, args.source_dir),
                        "overrides": lambda: overrides(profile, lock, args.source_dir),

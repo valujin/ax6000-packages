@@ -130,6 +130,11 @@ class FirmwareExportIntegration(unittest.TestCase):
                                     '--source-dir', str(source), '--phase', 'vendor-fixes'],
                                    text=True, capture_output=True)
             self.assertEqual(fixes.returncode, 0, fixes.stderr)
+            defaults = subprocess.run(['python3', str(ROOT / 'scripts/prepare-firmware.py'),
+                                       '--profile', str(profile_path), '--lock', str(lock_path),
+                                       '--source-dir', str(source), '--phase', 'repository-files'],
+                                      text=True, capture_output=True)
+            self.assertEqual(defaults.returncode, 0, defaults.stderr)
             output = root / 'raw'
             result = subprocess.run(['python3', str(ROOT / 'scripts/prepare-firmware.py'),
                                      '--profile', str(profile_path), '--lock', str(lock_path),
