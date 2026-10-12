@@ -1,0 +1,10 @@
+{
+  "source_commit": "ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8",
+  "repository": "https://github.com/padavanonly/immortalwrt-mt798x-6.6.git",
+  "license": "GPL-2.0-only",
+  "license_text": "openwrt-kconfig-tools-ec9ef10.tar.gz:LICENSES/GPL-2.0",
+  "image_path": "target/linux/mediatek/image/filogic.mk",
+  "image_sha256": "ff466aac4b54e13bce860347ff5043a6b01760c2848a77e198a1db74753fe411",
+  "image_commands_path": "include/image-commands.mk",
+  "image_commands_sha256": "45057cb88e893f768dafa1c3913ed48dd2fa5ebcaa5247049193096c77b561bb"
+}

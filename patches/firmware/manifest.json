@@ -195,6 +195,14 @@
       "fixture": "openvswitch-packages-110d325-Makefile.gz",
       "feed_name": "packages",
       "feed_commit": "110d325c507051d78dac56d95d1c98a724eb0753"
+    },
+    {
+      "patch": "180-stock-initramfs-factory-size-limit.patch",
+      "path": "target/linux/mediatek/image/filogic.mk",
+      "sha256": "6fc8757eb40acdbeaa1cd5ca9dfc9c5c04e2f108f69a9137a61a6def79e88cec",
+      "before_sha256": "ff466aac4b54e13bce860347ff5043a6b01760c2848a77e198a1db74753fe411",
+      "after_sha256": "137c24435623dfde4429ba2b2be48a51d1ba802a1a2ccb94c74b12132b97b5da",
+      "fixture": "filogic-ec9ef10.mk.gz"
     }
   ]
 }
