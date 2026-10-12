@@ -58,7 +58,16 @@ class ReleaseImportTests(unittest.TestCase):
         self.expected = self.root / 'expected.json'
         self.expected.write_text(json.dumps(self.profile))
         self.profile['firmware']['kernel_version'] = '6.6.133~' + 'a' * 32 + '-r1'
-        self.profile['sdk'] = {'url': 'https://example.com/sdk.tar.zst', 'sha256': 'b' * 64}
+        self.target = 'bin/targets/mediatek/filogic/'
+        self.sdk_path = self.target + 'immortalwrt-sdk-mediatek-filogic.tar.zst'
+        self.image_path = self.target + 'immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin'
+        self.assets = {
+            'bin/packages/aarch64_cortex-a53/base/fixture.ipk': b'package',
+            self.sdk_path: b'fixture matching SDK archive',
+            self.image_path: b'fixture complete stock sysupgrade image',
+        }
+        self.profile['sdk'] = {'url': 'https://example.com/' + Path(self.sdk_path).name,
+                               'sha256': hashlib.sha256(self.assets[self.sdk_path]).hexdigest()}
         self.profile['feeds'].insert(0, {'name': 'base', 'url': self.profile['firmware']['repository'],
                                         'commit': self.profile['firmware']['commit']})
         self.profile_bytes = json.dumps(self.profile).encode()
@@ -66,16 +75,24 @@ class ReleaseImportTests(unittest.TestCase):
                      'profile_sha256': hashlib.sha256(self.profile_bytes).hexdigest(),
                      'firmware': self.profile['firmware'], 'sdk': self.profile['sdk'],
                      'feeds': {f['name']: f['commit'] for f in self.profile['feeds']}}
+        self.manifest = {
+            'source_commit': self.profile['firmware']['commit'],
+            'kernel_version': self.profile['firmware']['kernel_version'],
+            'files': [{'path': path, 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}
+                      for path, data in sorted(self.assets.items())],
+        }
 
     def bundle(self, extra=(), overrides=None):
         files = {'profile.json': self.profile_bytes,
                  'lock.json': json.dumps(self.lock).encode(),
-                 'firmware-manifest.json': json.dumps({
-                     'source_commit': self.profile['firmware']['commit'],
-                     'kernel_version': self.profile['firmware']['kernel_version']}).encode(),
-                 'bin/packages/aarch64_cortex-a53/base/fixture.ipk': b'package',
+                 'firmware-manifest.json': json.dumps(self.manifest).encode(),
                  'usign': b'#!/bin/sh\nexit 99\n'}
-        files.update(overrides or {})
+        files.update(self.assets)
+        for path, data in (overrides or {}).items():
+            if data is None:
+                files.pop(path, None)
+            else:
+                files[path] = data
         plain = self.root / 'bundle.tar'
         with tarfile.open(plain, 'w') as archive:
             directory = tarfile.TarInfo('./')
@@ -160,6 +177,96 @@ class ReleaseImportTests(unittest.TestCase):
             'source_commit': self.profile['firmware']['commit'], 'kernel_version': 'incorrect'}).encode()})
         with self.assertRaisesRegex(ValueError, 'manifest'):
             self.run_import(packed, checksum)
+
+    def test_manifest_missing_extra_and_duplicate_assets_are_rejected(self):
+        for changes in ('missing', 'extra', 'duplicate'):
+            with self.subTest(changes=changes):
+                manifest = json.loads(json.dumps(self.manifest))
+                overrides = {}
+                if changes == 'missing':
+                    overrides[self.image_path] = None
+                elif changes == 'extra':
+                    overrides[self.target + 'unexpected.bin'] = b'unlisted image'
+                else:
+                    manifest['files'].append(manifest['files'][0])
+                overrides['firmware-manifest.json'] = json.dumps(manifest).encode()
+                packed, checksum = self.bundle(overrides=overrides)
+                with self.assertRaisesRegex(ValueError, 'inventory|duplicate'):
+                    self.run_import(packed, checksum)
+                self.assertFalse((self.root / 'raw').exists())
+
+    def test_manifest_hash_size_and_invalid_fields_are_rejected(self):
+        for field, value in (('sha256', '0' * 64), ('sha256', 'invalid'),
+                             ('size', 1), ('size', -1), ('size', True), ('size', '123')):
+            with self.subTest(field=field, value=value):
+                manifest = json.loads(json.dumps(self.manifest))
+                manifest['files'][0][field] = value
+                packed, checksum = self.bundle(overrides={'firmware-manifest.json': json.dumps(manifest).encode()})
+                with self.assertRaisesRegex(ValueError, 'manifest|inventory'):
+                    self.run_import(packed, checksum)
+                self.assertFalse((self.root / 'raw').exists())
+
+    def test_manifest_paths_must_be_canonical_safe_bin_files(self):
+        for path in ('../escaped', '/bin/file', 'bin/../profile.json', 'profile.json',
+                     'bin\\file', 'bin//file', 'bin/./file', 'bin', 'bin/targets/'):
+            with self.subTest(path=path):
+                manifest = json.loads(json.dumps(self.manifest))
+                manifest['files'][0]['path'] = path
+                packed, checksum = self.bundle(overrides={'firmware-manifest.json': json.dumps(manifest).encode()})
+                with self.assertRaisesRegex(ValueError, 'manifest|inventory'):
+                    self.run_import(packed, checksum)
+                self.assertFalse((self.root / 'raw').exists())
+
+    def test_absent_inventory_is_rejected(self):
+        for entries in (None, [], {}, [None]):
+            with self.subTest(entries=entries):
+                manifest = dict(self.manifest, files=entries)
+                packed, checksum = self.bundle(overrides={'firmware-manifest.json': json.dumps(manifest).encode()})
+                with self.assertRaisesRegex(ValueError, 'inventory|manifest'):
+                    self.run_import(packed, checksum)
+                self.assertFalse((self.root / 'raw').exists())
+
+    def test_sdk_and_stock_image_are_required_even_with_self_consistent_inventory(self):
+        for asset in (self.sdk_path, self.image_path):
+            with self.subTest(asset=asset):
+                manifest = dict(self.manifest, files=[entry for entry in self.manifest['files'] if entry['path'] != asset])
+                packed, checksum = self.bundle(overrides={asset: None,
+                    'firmware-manifest.json': json.dumps(manifest).encode()})
+                with self.assertRaisesRegex(ValueError, 'SDK|stock sysupgrade'):
+                    self.run_import(packed, checksum)
+                self.assertFalse((self.root / 'raw').exists())
+
+    def test_sdk_profile_hash_must_match_even_when_inventory_hash_matches(self):
+        profile = json.loads(self.profile_bytes)
+        profile['sdk']['sha256'] = '0' * 64
+        data = json.dumps(profile).encode()
+        lock = dict(self.lock, sdk=profile['sdk'], profile_sha256=hashlib.sha256(data).hexdigest())
+        packed, checksum = self.bundle(overrides={'profile.json': data, 'lock.json': json.dumps(lock).encode()})
+        with self.assertRaisesRegex(ValueError, 'SDK.*checksum'):
+            self.run_import(packed, checksum)
+        self.assertFalse((self.root / 'raw').exists())
+
+    def test_duplicate_sdk_archive_is_rejected_even_when_both_are_in_inventory(self):
+        duplicate = self.target + 'second-sdk.tar.zst'
+        data = b'other SDK archive'
+        manifest = dict(self.manifest, files=self.manifest['files'] + [
+            {'path': duplicate, 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}])
+        packed, checksum = self.bundle(overrides={duplicate: data,
+            'firmware-manifest.json': json.dumps(manifest).encode()})
+        with self.assertRaisesRegex(ValueError, 'exactly one.*SDK'):
+            self.run_import(packed, checksum)
+        self.assertFalse((self.root / 'raw').exists())
+
+    def test_duplicate_stock_image_is_rejected_even_when_both_are_in_inventory(self):
+        duplicate = self.target + 'other-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin'
+        data = b'other stock image'
+        manifest = dict(self.manifest, files=self.manifest['files'] + [
+            {'path': duplicate, 'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}])
+        packed, checksum = self.bundle(overrides={duplicate: data,
+            'firmware-manifest.json': json.dumps(manifest).encode()})
+        with self.assertRaisesRegex(ValueError, 'exactly one.*stock sysupgrade'):
+            self.run_import(packed, checksum)
+        self.assertFalse((self.root / 'raw').exists())
 
 
 if __name__ == '__main__':

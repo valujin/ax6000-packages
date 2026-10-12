@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+from urllib.parse import urlsplit
 
 SPEC = importlib.util.spec_from_file_location('release_prepare', Path(__file__).with_name('prepare.py'))
 prepare = importlib.util.module_from_spec(SPEC)
@@ -35,6 +36,63 @@ def read_json(path):
     if not path.is_file() or path.stat().st_size > 8 * 1024 * 1024:
         raise ValueError(f'Missing or oversized metadata: {path.name}')
     return json.loads(path.read_text())
+
+
+def validate_inventory(raw, profile, manifest):
+    entries = manifest.get('files')
+    if not isinstance(entries, list) or not entries:
+        raise ValueError('Firmware manifest must contain a nonempty bin file inventory')
+    inventory = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError('Invalid firmware manifest inventory entry')
+        path, size, digest = entry.get('path'), entry.get('size'), entry.get('sha256')
+        if not isinstance(path, str):
+            raise ValueError('Invalid firmware manifest inventory path')
+        relative = PurePosixPath(path)
+        if (relative.is_absolute() or len(relative.parts) < 2 or relative.parts[0] != 'bin'
+                or '..' in relative.parts or '\\' in path or '\x00' in path
+                or relative.as_posix() != path):
+            raise ValueError(f'Unsafe or noncanonical firmware manifest inventory path: {path}')
+        if path in inventory:
+            raise ValueError(f'Duplicate firmware manifest inventory path: {path}')
+        if type(size) is not int or size < 0 or not isinstance(digest, str) \
+                or not re.fullmatch(r'[0-9a-f]{64}', digest):
+            raise ValueError(f'Invalid firmware manifest size or checksum: {path}')
+        inventory[path] = entry
+    binary = raw / 'bin'
+    if binary.is_symlink() or not binary.is_dir():
+        raise ValueError('Firmware manifest bin inventory directory is missing')
+    actual = {}
+    for path in binary.rglob('*'):
+        if path.is_symlink() or (not path.is_file() and not path.is_dir()):
+            raise ValueError(f'Firmware manifest inventory contains a link or special file: {path}')
+        if path.is_file():
+            actual[path.relative_to(raw).as_posix()] = path
+    if set(actual) != set(inventory):
+        missing = sorted(set(inventory) - set(actual))
+        extra = sorted(set(actual) - set(inventory))
+        raise ValueError(f'Firmware manifest inventory differs: missing={missing[:10]}, extra={extra[:10]}')
+    for name, path in actual.items():
+        entry = inventory[name]
+        if path.stat().st_size != entry['size']:
+            raise ValueError(f'Firmware manifest size mismatch: {name}')
+        with path.open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        if digest != entry['sha256']:
+            raise ValueError(f'Firmware manifest checksum mismatch: {name}')
+    firmware = profile['firmware']
+    target = binary / 'targets' / firmware['target'] / firmware['subtarget']
+    sdk_name = PurePosixPath(urlsplit(profile['sdk']['url']).path).name
+    sdk = target / sdk_name
+    candidates = sorted(target.glob('*sdk*.tar.*'))
+    if len(candidates) != 1 or candidates[0] != sdk or sdk.relative_to(raw).as_posix() not in inventory:
+        raise ValueError('Firmware inventory must contain exactly one matching profile SDK archive')
+    if inventory[sdk.relative_to(raw).as_posix()]['sha256'] != profile['sdk']['sha256']:
+        raise ValueError('Firmware SDK archive checksum differs from the generated profile')
+    images = list(target.glob('*-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin'))
+    if len(images) != 1 or images[0].relative_to(raw).as_posix() not in inventory:
+        raise ValueError('Firmware inventory must contain exactly one recorded stock sysupgrade image')
 
 
 def validate_metadata(raw, expected_profile):
@@ -65,6 +123,7 @@ def validate_metadata(raw, expected_profile):
     if (manifest.get('source_commit') != profile['firmware']['commit'] or
             manifest.get('kernel_version') != profile['firmware']['kernel_version']):
         raise ValueError('Release firmware manifest source or kernel ABI differs from profile')
+    validate_inventory(raw, profile, manifest)
 
 
 def import_bundle(archive, checksum, output, expected_profile, *, max_bytes=8 * 1024 ** 3):
