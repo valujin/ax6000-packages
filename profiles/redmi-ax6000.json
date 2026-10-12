@@ -1,6 +1,6 @@
 {
   "all_kmods": false,
-  "build_id": "redmi-ax6000-ec9ef10efc65-a3993ed37a41",
+  "build_id": "redmi-ax6000-ec9ef10efc65-0b03a5907043",
   "build_source": {
     "defconfig": "defconfig/mt7986-ax6000.config",
     "device": "xiaomi_redmi-router-ax6000-stock",
@@ -103,7 +103,7 @@
   ],
   "schema_version": 1,
   "sdk": {
-    "sha256": "a3993ed37a4184931850f015201f3bd052c8e69f5d2ea184a02fc24d8d173549",
-    "url": "https://valujin.github.io/ax6000-packages/firmware/redmi-ax6000-ec9ef10efc65-a3993ed37a41/immortalwrt-sdk-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+    "sha256": "0b03a5907043df64bfff731e1592ddfd5f6da5436f2763acccf828573ccf8b01",
+    "url": "https://valujin.github.io/ax6000-packages/firmware/redmi-ax6000-ec9ef10efc65-0b03a5907043/immortalwrt-sdk-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
   }
 }

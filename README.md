@@ -8,10 +8,10 @@
 
 ## Скачать и проверить
 
-[Release с прошивкой, SDK и результатом сборки](https://github.com/valujin/ax6000-packages/releases/tag/firmware-redmi-ax6000-ec9ef10efc65-a3993ed37a41).
+[Release с прошивкой, SDK и результатом сборки](https://github.com/valujin/ax6000-packages/releases/tag/firmware-redmi-ax6000-ec9ef10efc65-0b03a5907043).
 [Подписанный репозиторий пакетов и SDK](https://valujin.github.io/ax6000-packages/).
-[Stock sysupgrade](https://valujin.github.io/ax6000-packages/firmware/redmi-ax6000-ec9ef10efc65-a3993ed37a41/immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin)
-и [SHA256SUMS](https://valujin.github.io/ax6000-packages/firmware/redmi-ax6000-ec9ef10efc65-a3993ed37a41/SHA256SUMS).
+[Stock sysupgrade](https://valujin.github.io/ax6000-packages/firmware/redmi-ax6000-ec9ef10efc65-0b03a5907043/immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin)
+и [SHA256SUMS](https://valujin.github.io/ax6000-packages/firmware/redmi-ax6000-ec9ef10efc65-0b03a5907043/SHA256SUMS).
 
 Сборка использует исходники `ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8` и точный ABI:
 
@@ -19,18 +19,27 @@
 6.6.133~6ea4b96ad26e951cc0b4fa9296a521d3-r1
 ```
 
-Фактическая полная сборка проверена: **1370 IPK, включая 1029 модулей ядра**.
-Из её экспортированного SDK отдельно собраны и проверены **26 свежих пакетов**;
-**1028 штатных модулей** сохранены побайтно из исходного набора. AmneziaWG
-пересобран против того же ABI. SHA256 SDK:
+Фактическая полная сборка проверена: **1370 IPK, включая 1029 пакетов kmod**.
+Из её экспортированного SDK отдельно собраны 26 запрошенных пакетов и их
+зависимости; **1028 штатных пакетов kmod** сохранены побайтно из исходного
+набора. AmneziaWG пересобран против того же ABI. Tailscale 1.104.1-r2
+содержит официальные исполняемые файлы, сохранённые побайтно в прошивке
+и IPK. SHA256 SDK:
 
 ```text
-a3993ed37a4184931850f015201f3bd052c8e69f5d2ea184a02fc24d8d173549
+0b03a5907043df64bfff731e1592ddfd5f6da5436f2763acccf828573ccf8b01
 ```
 
-Проверки инструментария прошли: 142 теста, включая реальные проверки
-`usign`. Компиляция и проверки артефактов не подтверждают загрузку и работу
-Wi-Fi на физическом роутере.
+Публичная публикация проверена скачиванием: 1365 пакетов, 8 файлов
+прошивки/SDK и все 15 файлов Release совпали с проверенным набором. Индекс
+пакетов проверен закреплённым ключом `usign`. Проверки артефактов не
+подтверждают загрузку и работу Wi-Fi на физическом роутере.
+
+Stock factory UBI не публикуется: полный образ превышает штатный раздел
+30 MiB. Для установленной OpenWrt/ImmortalWrt используется stock sysupgrade;
+initramfs-kernel предназначен для загрузки в RAM по подходящей процедуре
+восстановления. Его нельзя записывать в штатный раздел kernel. Эта сборка
+заменяет предыдущий Release с Tailscale r1; старый Release сохранён.
 
 ## Установка на роутер
 
