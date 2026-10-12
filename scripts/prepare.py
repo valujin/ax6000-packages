@@ -374,6 +374,17 @@ def select_packages(profile, sdk):
     config = sdk / ".config"
     text = config.read_text()
     language_symbols = luci_language_symbols(profile, sdk, "m")
+    # The SDK's generated build snapshot can declare image packages/languages
+    # as bool even when refreshed feed metadata declares them as tristate.
+    # Honor that baked type without rewriting the snapshot or kernel context.
+    snapshot = sdk / "Config-build.in"
+    boolean_symbols = set(re.findall(
+        r"^config ((?:PACKAGE_|LUCI_LANG_)[^\s]+)\n[ \t]+bool[ \t]*(?:\n|$)",
+        snapshot.read_text() if snapshot.is_file() else "", re.M))
+    language_symbols = {symbol: "y" if symbol in boolean_symbols else value
+                        for symbol, value in language_symbols.items()}
+    package_values = {name: "y" if "PACKAGE_" + name in boolean_symbols else "m"
+                      for name in selected}
     text = re.sub(r"^(?:# )?CONFIG_(LUCI_LANG_[^= ]+)(?:=.*| is not set)\n?",
                   lambda match: "" if match.group(1) in language_symbols else match.group(0), text, flags=re.M)
     # Preserve target/toolchain config, clear preselected package defaults and firmware build output.
@@ -384,10 +395,11 @@ def select_packages(profile, sdk):
                       "# CONFIG_SIGNED_PACKAGES is not set\n"
                       + "".join(f"CONFIG_{symbol}={value}\n" for symbol, value in sorted(language_symbols.items()))
                       + "".join(f"# CONFIG_PACKAGE_{name} is not set\n" for name in sorted(available - set(selected)))
-                      + "".join(f"CONFIG_PACKAGE_{name}=m\n" for name in selected))
+                      + "".join(f"CONFIG_PACKAGE_{name}={package_values[name]}\n" for name in selected))
     report = {"profile": profile["id"], "requested": sorted(requested), "candidate_kmods": kmods,
               "baseline_kmods": sorted(name for name in baseline if name.startswith("kmod-")),
-              "luci_languages": {name: "m" for name in profile.get("luci_languages", [])}}
+              "luci_languages": {name: language_symbols["LUCI_LANG_" + name]
+                                 for name in profile.get("luci_languages", [])}}
     (sdk / "build-selection.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
