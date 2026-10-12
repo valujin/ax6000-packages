@@ -4,9 +4,11 @@ import argparse
 import base64
 import copy
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import shutil
 import subprocess
@@ -355,6 +357,84 @@ def runtime_dependency_closure(controls, roots):
     return closure
 
 
+def normalize_local_sdk(archive, destination, source):
+    """Replace reviewed local builder links; downloaded SDK validation stays strict."""
+    prepare.require(not destination.exists() and not destination.is_symlink(),
+                    "normalized SDK destination already exists")
+    same = ("which gzip realpath rsync bash egrep wget seq git diff file perl grep "
+            "getopt unzip cp install stat g++").split()
+    tools = {name: ("/usr/bin/" + name, "/usr/bin/" + name) for name in same}
+    tools.update({"gcc": ("/usr/bin/cc", "/usr/bin/cc"),
+                  "python": ("/usr/bin/python3.12", "/usr/bin/python3"),
+                  "python3": ("/usr/bin/python3.12", "/usr/bin/python3"),
+                  "awk": ("/usr/bin/gawk", "/usr/bin/gawk")})
+    scripts = {"xxd": "xxdi.pl", "ldconfig": "noop.sh"}
+    source = source.absolute()
+    replacements = {}
+    with tarfile.open(archive, "r:*") as original:
+        members = original.getmembers()
+        prepare.require(bool(members), "local SDK archive is empty")
+        paths, roots = {}, set()
+        for member in members:
+            path = PurePosixPath(member.name)
+            canonical = member.name.rstrip("/") if member.isdir() else member.name
+            prepare.require(path.parts and not path.is_absolute() and ".." not in path.parts
+                            and canonical == str(path), f"unsafe local SDK archive path: {member.name}")
+            prepare.require(str(path) not in paths, f"duplicate local SDK archive path: {member.name}")
+            prepare.require(member.isfile() or member.isdir() or member.issym() or member.islnk(),
+                            f"unsupported local SDK archive member: {member.name}")
+            paths[str(path)] = member
+            roots.add(path.parts[0])
+        prepare.require(len(roots) == 1, "local SDK archive needs exactly one top-level directory")
+        for name, member in paths.items():
+            path = PurePosixPath(name)
+            for parent in path.parents:
+                if str(parent) in paths:
+                    prepare.require(paths[str(parent)].isdir(),
+                                    f"local SDK archive parent is not a directory: {name}")
+            if not (member.issym() or member.islnk()):
+                continue
+            if member.linkname.startswith("/"):
+                prepare.require(member.issym() and path.parts[1:-1] == ("staging_dir", "host", "bin"),
+                                f"unreviewed absolute local SDK link: {name}")
+                tool = path.name
+                if tool in tools:
+                    expected, target = tools[tool]
+                    prepare.require(member.linkname == expected, f"local SDK tool link target differs: {name}")
+                    replacements[name] = (f'#!/bin/sh\nexec {target} "$@"\n'.encode(), 0o755)
+                else:
+                    prepare.require(tool in scripts, f"unreviewed absolute local SDK link: {name}")
+                    script = source / "scripts" / scripts[tool]
+                    prepare.require(member.linkname == str(script), f"local SDK script link target differs: {name}")
+                    prepare.require(source.resolve() == source and not (source / "scripts").is_symlink()
+                                    and not script.is_symlink() and script.is_file(),
+                                    f"local SDK source script is not a regular pinned source file: {name}")
+                    info = script.stat()
+                    prepare.require(0 < info.st_size <= 1024 * 1024 and info.st_mode & 0o7777 == 0o755,
+                                    f"local SDK source script size or executable mode differs: {name}")
+                    replacements[name] = (script.read_bytes(), info.st_mode & 0o777)
+            else:
+                target = posixpath.join(str(path.parent), member.linkname) if member.issym() else member.linkname
+                normalized = PurePosixPath(posixpath.normpath(target))
+                prepare.require(normalized.parts and normalized.parts[0] == path.parts[0]
+                                and ".." not in normalized.parts,
+                                f"local SDK archive link escapes its root: {name}")
+        # All archive and source-script checks finish before creating output.
+        with tarfile.open(destination, "w") as rewritten:
+            for member in members:
+                replacement = replacements.get(str(PurePosixPath(member.name)))
+                if replacement is None:
+                    rewritten.addfile(member, original.extractfile(member) if member.isfile() else None)
+                else:
+                    data, mode = replacement
+                    regular = copy.copy(member)
+                    regular.pax_headers = {key: value for key, value in member.pax_headers.items()
+                                           if key not in {"linkpath", "size"}}
+                    regular.type, regular.linkname = tarfile.REGTYPE, ""
+                    regular.size, regular.mode = len(data), mode
+                    rewritten.addfile(regular, io.BytesIO(data))
+
+
 def augment_sdk(profile, source, archive, controls, abi):
     """Keep the full successful package inventory; refresh requested external packages."""
     match = prepare.KERNEL_PACKAGE.fullmatch(abi)
@@ -389,7 +469,9 @@ def augment_sdk(profile, source, archive, controls, abi):
             unpack_archive = temporary / "sdk.tar"
             with unpack_archive.open("wb") as stream:
                 subprocess.run(["zstd", "-d", "-c", "--", str(archive)], stdout=stream, check=True)
-        sdk = prepare.extract_sdk(unpack_archive, temporary / "extracted")
+        normalized = temporary / "sdk-normalized.tar"
+        normalize_local_sdk(unpack_archive, normalized, source)
+        sdk = prepare.extract_sdk(normalized, temporary / "extracted")
         sdk_kernel = sdk / kernel.relative_to(source)
         for required in (".config", "Makefile", "Module.symvers", "include/generated/autoconf.h", "include/config/kernel.release"):
             prepare.require((sdk_kernel / required).is_file(), f"generated SDK lacks prepared kernel file {required}")
