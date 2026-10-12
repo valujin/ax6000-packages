@@ -18,6 +18,19 @@ manual runs under **Actions → Monitor and publish packages → Run workflow**.
 Scheduled execution follows GitHub's default-branch schedule behavior. Manual
 publication also runs only on the repository's default branch.
 
+GitHub [automatically disables scheduled workflows in public repositories after
+60 days without repository activity](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows).
+An independent lightweight job checks the default branch's latest commit date
+and, after at least 30 idle days, commits only `.github/monitor-heartbeat.json`.
+It runs even if monitoring or compilation fails. Only that job receives
+`contents: write`; it uses the repository's temporary `GITHUB_TOKEN` and obeys
+branch protection. Permission or branch-rule failures fail the job visibly.
+The heartbeat file is outside the recipe and profile digests, so it does not
+cause package rebuilds. [Pushes using `GITHUB_TOKEN` do not trigger push workflows
+or Pages builds](https://docs.github.com/en/actions/concepts/security/github_token).
+An already disabled workflow must first be re-enabled, for example with
+`gh workflow enable packages.yml --repo valujin/ax6000-packages`.
+
 The package workflow uses the enabled `profiles/redmi-ax6000.json` for the
 published Linux 6.6.133 generation. Its SDK archive was tested by an independent
 package-only build with fresh AmneziaWG compilation and exact kernel-context
@@ -91,6 +104,10 @@ dependency for kernel modules, before constructing and signing the index.
 Validation failure prevents upload. The private signing key is written with mode
 `0600` into the runner's temporary directory during publication and removed when
 that step exits. It is never included in the Pages artifact.
+The package workflow builds official host `usign` from verified commit
+`f1f65026a94137c91b5466b149ef3ea3f20091e9` with one compiler job for publication.
+An SDK's exported `usign` can be a relocation wrapper requiring private loader
+files; it is not used as a standalone signing executable.
 
 The artifact contains the complete public repository, its signed index, public
 key, build metadata and `state/lock.json`. A separate Pages deployment job runs

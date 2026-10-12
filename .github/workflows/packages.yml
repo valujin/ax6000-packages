@@ -24,6 +24,83 @@ env:
   PROFILE: profiles/redmi-ax6000.json
 
 jobs:
+  heartbeat:
+    # Keep repository activity independent of source/build/publication failures.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Keep scheduled monitoring active after 30 idle days
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          from datetime import datetime, timedelta, timezone
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          branch = os.environ['DEFAULT_BRANCH']
+          repository = os.environ['GITHUB_REPOSITORY']
+          path = '.github/monitor-heartbeat.json'
+          base = f'https://api.github.com/repos/{repository}'
+
+          def api(endpoint, *, body=None, missing_ok=False):
+              request = urllib.request.Request(
+                  base + endpoint,
+                  data=None if body is None else json.dumps(body).encode(),
+                  method='GET' if body is None else 'PUT',
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                           'Accept': 'application/vnd.github+json',
+                           'Content-Type': 'application/json',
+                           'X-GitHub-Api-Version': '2026-03-10'})
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      data = response.read(1024 * 1024 + 1)
+              except urllib.error.HTTPError as error:
+                  if missing_ok and error.code == 404:
+                      return None
+                  raise SystemExit(f'Heartbeat API failed (HTTP {error.code}); '
+                                   'check Actions contents-write permission and branch rules.')
+              if len(data) > 1024 * 1024:
+                  raise SystemExit('Heartbeat API response is unexpectedly large')
+              return json.loads(data)
+
+          commits_url = '/commits?' + urllib.parse.urlencode({'sha': branch, 'per_page': 1})
+          latest = api(commits_url)[0]
+          now = datetime.now(timezone.utc)
+          committed = datetime.fromisoformat(latest['commit']['committer']['date'].replace('Z', '+00:00'))
+          if now - committed < timedelta(days=30):
+              print('Repository has a recent branch commit; no heartbeat is needed.')
+          else:
+              endpoint = '/contents/' + path
+              previous = api(endpoint + '?' + urllib.parse.urlencode({'ref': branch}), missing_ok=True)
+              if previous is not None:
+                  if (previous.get('type') != 'file' or previous.get('path') != path
+                          or previous.get('encoding') != 'base64' or previous.get('size', 0) > 4096):
+                      raise SystemExit('Refusing unexpected heartbeat path or contents')
+                  old = json.loads(base64.b64decode(previous['content']))
+                  if old.get('schema_version') != 1 or old.get('kind') != 'monitor-heartbeat':
+                      raise SystemExit('Refusing to replace a foreign heartbeat file')
+              if api(commits_url)[0]['sha'] != latest['sha']:
+                  raise SystemExit('Default branch changed during heartbeat check; retry on the next run')
+              content = json.dumps({'schema_version': 1, 'kind': 'monitor-heartbeat',
+                                    'observed_commit': latest['sha'],
+                                    'updated_at': now.isoformat()}, indent=2) + '\n'
+              body = {'message': 'Keep scheduled source monitoring active', 'branch': branch,
+                      'content': base64.b64encode(content.encode()).decode()}
+              if previous is not None:
+                  body['sha'] = previous['sha']
+              api(endpoint, body=body)
+              print('Committed monitoring heartbeat after at least 30 idle days.')
+          PY
+
   monitor:
     # Manual runs on feature branches cannot access the publication path.
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -162,13 +239,24 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential clang flex bison gawk gettext git libncurses-dev \
+            build-essential clang cmake flex bison gawk gettext git libjson-c-dev libncurses-dev \
             libssl-dev python3 python3-setuptools rsync unzip zlib1g-dev \
             file wget curl zstd xz-utils
       - name: Build packages on the GitHub hosted runner
         run: |
           bash scripts/build.sh --profile "$PROFILE" --lock state/lock.json \
             --work-dir "$RUNNER_TEMP/sdk-build" --output-dir raw
+      - name: Build pinned official host usign
+        run: |
+          pin=f1f65026a94137c91b5466b149ef3ea3f20091e9
+          git init "$RUNNER_TEMP/usign-source"
+          git -C "$RUNNER_TEMP/usign-source" fetch --depth 1 https://github.com/openwrt/usign.git "$pin"
+          git -C "$RUNNER_TEMP/usign-source" checkout --detach FETCH_HEAD
+          [[ $(git -C "$RUNNER_TEMP/usign-source" rev-parse HEAD) == "$pin" ]]
+          bash scripts/resource-limit.sh --jobs 1 -- cmake \
+            -S "$RUNNER_TEMP/usign-source" -B "$RUNNER_TEMP/usign-build"
+          bash scripts/resource-limit.sh --jobs 1 -- cmake \
+            --build "$RUNNER_TEMP/usign-build" --parallel 1
       - name: Validate and sign package repository
         env:
           OPKG_SIGNING_KEY: ${{ secrets.OPKG_SIGNING_KEY }}
@@ -185,7 +273,7 @@ jobs:
           unset OPKG_SIGNING_KEY
           python3 scripts/publish.py --profile "$PROFILE" --input raw \
             --output public --key "$key" --public-key keys/repository.pub \
-            --usign raw/usign --lock state/lock.json
+            --usign "$RUNNER_TEMP/usign-build/usign" --lock state/lock.json
       - name: Enforce the complete Pages site size limit
         run: |
           python3 - <<'PY'
