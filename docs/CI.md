@@ -18,14 +18,12 @@ manual runs under **Actions → Monitor and publish packages → Run workflow**.
 Scheduled execution follows GitHub's default-branch schedule behavior. Manual
 publication also runs only on the repository's default branch.
 
-The package workflow first checks `profiles/redmi-ax6000.json`. The initial
-`enabled: false` profile produces an actionable summary and still monitors feed
-revisions and the latest Tailscale release. It skips SDK downloads, builds and
-deployment. Complete and verify the router
-compatibility profile before enabling it. In particular, use the exact firmware
-source commit and kernel ABI dependency, plus the URL and SHA-256 checksum of a
-matching SDK. A generic SDK for the same chipset is not sufficient evidence of
-kernel module compatibility.
+The package workflow uses the enabled `profiles/redmi-ax6000.json` for the
+published Linux 6.6.133 generation. Its SDK archive was tested by an independent
+package-only build with fresh AmneziaWG compilation and exact kernel-context
+verification. `profiles/redmi-ax6000-legacy.json` retains the disabled 6.6.95
+profile; its original matching SDK is unavailable. A generic SDK for the same
+chipset is not sufficient evidence of kernel module compatibility.
 
 Monitoring resolves source revisions and the Tailscale
 release into `state/lock.json`. The workflow compares this with the last
@@ -58,16 +56,20 @@ HTTPS site base URL, without `/state/lock.json`.
 4. Store the complete contents of `opkg-private.key` as the repository Actions
    secret `OPKG_SIGNING_KEY`. Keep the private key out of Git. Preserve a private
    backup so future indexes retain the same trusted signing identity. The
-   publisher derives and publishes the corresponding public key; no separate
-   public-key secret is required.
+   publisher derives and publishes the corresponding public key and requires
+   it to match `keys/repository.pub` before creating publication output. No
+   separate public-key secret is required.
    `scripts/install-feed.sh` pins this repository's public-key fingerprint. When
    creating a separate repository with a new key pair, update its
+   `keys/repository.pub` and its installer
    `expected_fingerprint` to the output of `usign -F -p opkg-public.key` before
    distributing that installation script.
 5. Configure `PACKAGE_REPOSITORY_URL` if the default Pages URL is unsuitable.
-6. Finish the compatibility profile and set `enabled` to `true`. Run the package
-   workflow manually on the default branch and inspect its summary and logs.
-   Install the public signing key on the router before using its signed feed.
+6. Activate the exact exported profile only after the matching firmware, SDK
+   SHA256, public key and signed feed have been verified at their live URLs. Run
+   the package workflow manually and inspect its summary and logs. The matching
+   image already contains the pinned public key; use `ax6000-install-feed` after
+   manual flashing and ABI verification.
 
 The existing `github-pages` environment must allow deployment from the default
 branch. GitHub repository/environment policy controls access to secrets and
@@ -125,8 +127,9 @@ SDK.
 `profiles/redmi-ax6000-new.json`. It builds a new firmware image, its SDK and
 kernel modules together from the pinned full source tree. The resulting
 `raw/profile.json` and `raw/lock.json` carry the actual new kernel ABI; publication
-uses those generated files. The existing installed-firmware profile remains
-disabled until its exact compatible inputs are supplied.
+uses those generated files. The old installed-firmware profile is retained as
+`profiles/redmi-ax6000-legacy.json` and remains disabled because its exact SDK is
+unavailable. The enabled daily profile uses the validated published generation.
 
 Every successful full build uploads the complete firmware, SDK, packages and
 metadata as an Actions artifact retained for fourteen days. Build logs and the
