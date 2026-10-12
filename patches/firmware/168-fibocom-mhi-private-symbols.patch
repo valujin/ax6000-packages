@@ -1,0 +1,41 @@
+Fibocom MHI: isolate the private vendor API from the kernel MHI bus.
+
+All eight objects in fibo_mhi include this private header. Alias all 19 vendor
+exports so declarations, definitions, internal calls, and EXPORT_SYMBOL all
+use fb_mhi names. Leave structures, function bodies, kernel MHI exports, and
+other packages unchanged. This prevents ath11k from resolving its MHI calls
+against the incompatible vendor controller types.
+Reference: https://github.com/torvalds/linux/blob/v6.6/include/linux/export.h
+
+--- a/package/mtk/applications/5g-modem/fibocom_MHI/src/core/mhi.h
++++ b/package/mtk/applications/5g-modem/fibocom_MHI/src/core/mhi.h
+@@ -13,6 +13,29 @@
+ #define _MHI_H_
+ 
+ #include <linux/miscdevice.h>
++
++/* This vendor stack has private MHI types. Keep its exported API separate
++ * from the kernel MHI bus so unrelated drivers resolve the kernel symbols.
++ */
++#define mhi_alloc_controller fb_mhi_alloc_controller
++#define mhi_async_power_up fb_mhi_async_power_up
++#define mhi_bdf_to_controller fb_mhi_bdf_to_controller
++#define mhi_device_get fb_mhi_device_get
++#define mhi_device_get_sync fb_mhi_device_get_sync
++#define mhi_device_put fb_mhi_device_put
++#define mhi_download_rddm_img fb_mhi_download_rddm_img
++#define mhi_driver_register fb_mhi_driver_register
++#define mhi_driver_unregister fb_mhi_driver_unregister
++#define mhi_force_rddm_mode fb_mhi_force_rddm_mode
++#define mhi_get_no_free_descriptors fb_mhi_get_no_free_descriptors
++#define mhi_ioctl fb_mhi_ioctl
++#define mhi_pm_suspend fb_mhi_pm_suspend
++#define mhi_poll fb_mhi_poll
++#define mhi_power_down fb_mhi_power_down
++#define mhi_prepare_for_power_up fb_mhi_prepare_for_power_up
++#define mhi_prepare_for_transfer fb_mhi_prepare_for_transfer
++#define mhi_sync_power_up fb_mhi_sync_power_up
++#define mhi_unprepare_from_transfer fb_mhi_unprepare_from_transfer
+ 
+ typedef u64 uint64;
+ typedef u32 uint32;

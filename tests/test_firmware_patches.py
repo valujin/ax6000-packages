@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -411,6 +412,56 @@ class FirmwarePatchTests(unittest.TestCase):
         self.assertEqual(re.sub(r'\s+', ' ', calls[0]),
                          'info->control, &dev->status->desc, 4096, WWAN_PORT_QMI, &qmi_wwan_cdc_wdm_manage_power')
         self.assertIn('#include <linux/usb/cdc-wdm.h>', text)
+
+    def test_fibocom_private_symbol_aliases_preserve_header_and_expand_kernel_exports(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        firmware.vendor_fixes(profile, self.source)
+        target = self.source / 'package/mtk/applications/5g-modem/fibocom_MHI/src/core/mhi.h'
+        before = gzip.decompress((ROOT / 'tests/fixtures/fibocom-mhi-private-header.h.gz').read_bytes()).decode()
+        text = target.read_text()
+        aliases = re.findall(r'^#define (mhi_\w+) (fb_mhi_\w+)$', text, re.M)
+        expected = {'mhi_alloc_controller', 'mhi_async_power_up', 'mhi_bdf_to_controller',
+                    'mhi_device_get', 'mhi_device_get_sync', 'mhi_device_put',
+                    'mhi_download_rddm_img', 'mhi_driver_register', 'mhi_driver_unregister',
+                    'mhi_force_rddm_mode', 'mhi_get_no_free_descriptors', 'mhi_ioctl',
+                    'mhi_pm_suspend', 'mhi_poll', 'mhi_power_down', 'mhi_prepare_for_power_up',
+                    'mhi_prepare_for_transfer', 'mhi_sync_power_up', 'mhi_unprepare_from_transfer'}
+        self.assertEqual({old for old, _ in aliases}, expected)
+        self.assertEqual(len(aliases), 19)
+        self.assertTrue(all(new == 'fb_' + old for old, new in aliases))
+        block = re.search(r'/\* This vendor stack has private MHI types\..*?\*/\n'
+                          r'(?:#define mhi_\w+ fb_mhi_\w+\n)+', text, re.S).group()
+        self.assertEqual(text.replace('\n' + block, ''), before,
+                         'private types, prototypes, and inline function bodies must remain byte-identical')
+        self.assertGreater(text.index(block), text.index('#include <linux/miscdevice.h>'))
+        compiler = shutil.which('gcc')
+        self.assertIsNotNone(compiler, 'host GCC preprocessor is required to verify kernel export aliases')
+        include = self.source / 'preprocessor/include/linux'
+        include.mkdir(parents=True)
+        (include / 'compiler.h').write_text('')
+        (include / 'linkage.h').write_text('#define ASM_NL ;\n')
+        (include / 'stringify.h').write_text('#define __stringify_1(x...) #x\n#define __stringify(x...) __stringify_1(x)\n')
+        export = gzip.decompress((ROOT / 'tests/fixtures/linux-export-6.6.133.h.gz').read_bytes())
+        self.assertEqual(hashlib.sha256(export).hexdigest(),
+                         '7641f650097b4fbe1c67e26d21157c3fec9f683ebd42149b1916092f23520158')
+        (include / 'export.h').write_bytes(export)
+        declarations = ''.join(f'int {old}(void) {{ return 1; }}\n'
+                               f'int caller_{i}(void) {{ return {old}(); }}\nEXPORT_SYMBOL({old});\n'
+                               for i, (old, _) in enumerate(aliases))
+        for private in [True, False]:
+            result = subprocess.run([compiler, '-E', '-P', '-x', 'c', '-I', str(include.parent), '-'],
+                                    input='#define CONFIG_64BIT 1\n#include <linux/export.h>\n' +
+                                          (block if private else '') + declarations,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for old, new in aliases:
+                symbol = new if private else old
+                self.assertIn(f'int {symbol}(void)', result.stdout)
+                self.assertIn(f'return {symbol}();', result.stdout)
+                self.assertIn(f'__export_symbol_{symbol}:', result.stdout)
+                if private:
+                    self.assertNotRegex(result.stdout, r'\b' + re.escape(old) + r'\b')
 
     def test_gobi_and_qmi_use_native_linux66_network_apis(self):
         vendor_source_fixture(self.source)

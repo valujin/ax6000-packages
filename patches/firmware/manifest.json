@@ -177,6 +177,14 @@
       "before_sha256": "e70e7e21b1b6e4b951528605964b7ff925f567512c50f8d298bfc977ac2a0d6d",
       "after_sha256": "11d598a33d310ca2b1759a1fb211ad929a0ac4b3149b0158618090d676d7471b",
       "fixture": "meig-qmi-qmi-wwan.c.gz"
+    },
+    {
+      "patch": "168-fibocom-mhi-private-symbols.patch",
+      "path": "package/mtk/applications/5g-modem/fibocom_MHI/src/core/mhi.h",
+      "sha256": "4c5d10b3c219d6829d4eafdf90fea1ae74fa3c47e34ed788cdc747a5b92d2013",
+      "before_sha256": "eaf4bf60521164c4b8d4fa837350eb16ca009d76e7d11e595cef0932613d2f41",
+      "after_sha256": "23eea0c95fca939749f79104b73e0416ab7bb8760f40d7fa0ce636467df39b51",
+      "fixture": "fibocom-mhi-private-header.h.gz"
     }
   ]
 }
