@@ -268,6 +268,25 @@ class RealSigningIntegration(unittest.TestCase):
                                   capture_output=True)
         self.assertEqual(verified.returncode, 0, verified.stderr.decode())
 
+    def test_signed_publication_preserves_exact_profile_bytes_and_lock_identity(self):
+        ipk(self.raw / 'wireguard.ipk', kernel=self.profile['firmware']['kernel_version'])
+        # The exported profile uses sorted JSON, whose exact bytes identify the lock.
+        original = (json.dumps(self.profile, indent=4, sort_keys=True) + '\n\n').encode()
+        self.profile_file.write_bytes(original)
+        self.lock['profile_sha256'] = hashlib.sha256(original).hexdigest()
+        self.lock_file.write_text(json.dumps(self.lock))
+        result = self.publish('--public-key', str(self.original_public))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        published = (self.output / 'profile.json').read_bytes()
+        self.assertEqual(published, original)
+        lock = json.loads((self.output / 'state/lock.json').read_text())
+        self.assertEqual(hashlib.sha256(published).hexdigest(), lock['profile_sha256'])
+        feed = self.output / 'feeds/router' / self.profile['firmware']['kernel_version']
+        verified = subprocess.run([USIGN, '-V', '-m', str(feed / 'Packages'),
+                                   '-p', str(self.original_public), '-x', str(feed / 'Packages.sig')],
+                                  capture_output=True)
+        self.assertEqual(verified.returncode, 0, verified.stderr.decode())
+
     def test_different_signing_key_refuses_before_creating_publication_output(self):
         ipk(self.raw / 'wireguard.ipk', kernel=self.profile['firmware']['kernel_version'])
         foreign_public = self.root / 'foreign.pub'
