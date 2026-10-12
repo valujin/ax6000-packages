@@ -117,6 +117,9 @@ class FirmwareExportIntegration(unittest.TestCase):
                     member = tarfile.TarInfo('sdk/' + name)
                     member.size = len(data)
                     archive.addfile(member, io.BytesIO(data))
+                which = tarfile.TarInfo('sdk/staging_dir/host/bin/which')
+                which.type, which.linkname = tarfile.SYMTYPE, '/usr/bin/which'
+                archive.addfile(which)
             signer = source / 'staging_dir/host/bin/usign'
             signer.parent.mkdir(parents=True)
             signer.write_text('#!/bin/sh\nexit 0\n')
@@ -161,6 +164,10 @@ class FirmwareExportIntegration(unittest.TestCase):
             self.assertEqual(generated_lock['feeds']['base'], profile['firmware']['commit'])
             with tarfile.open(output / 'bin/targets/mediatek/filogic' / sdk.name) as archive:
                 baseline = json.load(archive.extractfile('sdk/ax6000-baseline/manifest.json'))
+                which = archive.getmember('sdk/staging_dir/host/bin/which')
+                self.assertTrue(which.isfile())
+                self.assertEqual(which.mode, 0o755)
+                self.assertEqual(archive.extractfile(which).read(), b'#!/bin/sh\nexec /usr/bin/which "$@"\n')
                 self.assertEqual(baseline['source_patches'], source_patches)
                 self.assertEqual(baseline['kernel_version'], abi)
                 self.assertEqual(baseline['frozen_kmods'], ['kmod-ipt-geoip', 'kmod-wireguard'])
@@ -188,7 +195,7 @@ class FirmwareExportIntegration(unittest.TestCase):
                         depends='libfirmware-fixture')
             control_ipk(daily_packages / 'libfirmware-fixture-new.ipk', 'libfirmware-fixture', '2-r1')
             daily_signer = daily_sdk / 'staging_dir/host/bin/usign'
-            daily_signer.parent.mkdir(parents=True)
+            daily_signer.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(signer, daily_signer)
             shutil.copy2(source / 'build-selection.json', daily_sdk / 'build-selection.json')
             daily_output = root / 'daily-raw'
