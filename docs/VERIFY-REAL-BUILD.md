@@ -85,7 +85,7 @@ print('SDK:', sdk_name, sdk.stat().st_size, 'bytes')
 PY
 ```
 
-Для текущего подготовленного `.config` ожидается 1035 selected kmods. Окончательный report и реальные IPK — источник истины; при их расхождении публикацию остановить. Отдельно просмотреть список incompatible: он объясняет, какие архитектурно недоступные kmods не построены.
+Окончательный report и реальные IPK — источник истины; при их расхождении публикацию остановить. После исправления metadata Open vSwitch ожидается 1029 selected kmods: шесть старых внешних `*-intree` вариантов допускают только ядра 3.10–5.5 и недоступны на 6.6. Четыре встроенных варианта Open vSwitch остаются доступны. Отдельно просмотреть полный список incompatible.
 
 ## 2. Stock image и состав прошивки
 
@@ -222,7 +222,7 @@ assert needs_compile <= compiled.keys(), sorted(needs_compile - compiled.keys())
 source = Path(os.environ['AX6000_SOURCE'])
 kernel, = source.glob('build_dir/target-*/linux-*/linux-*/.vermagic')
 relative = kernel.parent.relative_to(source)
-for name in ('.config', '.config.set', '.vermagic', 'Module.symvers', 'modules.builtin.modinfo'):
+for name in ('.config', '.config.set', '.vermagic', 'Module.symvers', 'modules.builtin.modinfo', 'include/config/kernel.release'):
     assert (source / relative / name).read_bytes() == (sdk / relative / name).read_bytes(), name
 for name, frozen in baseline.items():
     if name not in compiled:
@@ -237,7 +237,7 @@ print('All offered packages retained; kmod ABI and frozen firmware/SDK verified'
 PY
 ```
 
-До и после SDK compile дополнительно сравнить `.config`, `.config.set`, `.vermagic`, Module.symvers и modules.builtin.modinfo из раздела 3 с новым extracted SDK. `prepare.py --phase check-kernel` подтверждает ABI hash, но byte comparison остальных файлов отдельно проверяет неизменность compile context.
+До и после SDK compile дополнительно сравнить все шесть файлов из раздела 3 с новым extracted SDK. `prepare.py --phase check-kernel` подтверждает ABI hash, но byte comparison остальных файлов отдельно проверяет неизменность compile context. Сравнивать с source после завершения всех образов: штатная сборка XZ initramfs включает `RD_XZ` и `DECOMPRESS_XZ` в его итоговом `.config`; ABI рассчитывается по `.config.set`. Не восстанавливать конфигурацию вручную ради совпадения с промежуточным состоянием.
 
 ## 6. Подпись и объём публикации
 

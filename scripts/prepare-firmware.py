@@ -219,6 +219,12 @@ def vendor_fixes(profile, source, check_only=False):
     prepare.require(profile["firmware"]["commit"] == manifest["source_commit"],
                     "vendor patches require the reviewed firmware source commit")
     for spec in manifest["patches"]:
+        if "feed_name" in spec:
+            pins = [feed.get("commit") for feed in profile.get("feeds", [])
+                    if feed.get("name") == spec["feed_name"]]
+            prepare.require(pins == [spec["feed_commit"]],
+                            f"vendor patch feed {spec['feed_name']} pin differs from the reviewed recipe")
+    for spec in manifest["patches"]:
         apply_source_patch(source, spec, directory / spec["patch"], check_only=check_only)
     record = source / "firmware-source-patches.json"
     if check_only:

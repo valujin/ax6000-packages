@@ -4,11 +4,13 @@ import gzip
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -165,6 +167,127 @@ class FirmwarePatchTests(unittest.TestCase):
         record.unlink()
         with self.assertRaisesRegex(ValueError, 'provenance'):
             firmware.vendor_fixes(profile, self.source, check_only=True)
+
+    @unittest.skipUnless(shutil.which('cc') and shutil.which('perl'), 'host C compiler and Perl are required')
+    def test_openvswitch_real_metadata_and_kconfig_exclude_unsupported_intree_only(self):
+        vendor_source_fixture(self.source)
+        recipe = self.source / 'feeds/packages/net/openvswitch/Makefile'
+        recipe.parent.mkdir(parents=True, exist_ok=True)
+        recipe.write_bytes(gzip.decompress((ROOT / 'tests/fixtures/openvswitch-packages-110d325-Makefile.gz').read_bytes()))
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        config_before = (self.source / '.config').read_bytes()
+        firmware.vendor_fixes(profile, self.source)
+        self.assertEqual((self.source / '.config').read_bytes(), config_before)
+        tools = self.source / 'fixture-tools'
+        with tarfile.open(ROOT / 'tests/fixtures/openwrt-kconfig-tools-ec9ef10.tar.gz', 'r:gz') as archive:
+            manifest = json.load(archive.extractfile('fixture-manifest.json'))
+            self.assertEqual(manifest['source_commit'], profile['firmware']['commit'])
+            for name, digest in manifest['files'].items():
+                data = archive.extractfile(name).read()
+                self.assertEqual(hashlib.sha256(data).hexdigest(), digest)
+                target = tools / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+        config_sources = tools / 'scripts/config'
+        conf = tools / 'conf'
+        subprocess.run(['cc', '-O0', '-I', str(config_sources), '-o', str(conf)] +
+                       [str(config_sources / name) for name in (
+                           'conf.c', 'confdata.c', 'expr.c', 'lexer.lex.c', 'menu.c',
+                           'parser.tab.c', 'preprocess.c', 'symbol.c', 'util.c')],
+                       check=True, capture_output=True, timeout=30)
+        text = recipe.read_text()
+        section = text[text.index('ovs_kmod_packages:='):text.index('# Dependency review')]
+        kernel = (tools / 'include/kernel.mk').read_text()
+        comparison = kernel[kernel.index('version_field='):]
+        metadata = tools / 'packages.info'
+        metadata.write_text('Source-Makefile: feeds/packages/net/openvswitch/Makefile\n')
+        # Run the actual recipe template with the pinned kernel.mk DUMP comparators.
+        # Only the final dump writer replaces OpenWrt's larger package build machinery.
+        makefile = f'DUMP:=1\nKERNEL_PATCHVER:=6.6\nOUT:={metadata}\n' + comparison + section + '''
+define emit
+$(eval $(call KernelPackage/$(1)))
+$(file >>$(OUT),Package: kmod-$(1))
+$(file >>$(OUT),Submenu: $(SUBMENU))
+$(file >>$(OUT),Category: $(CATEGORY))
+$(file >>$(OUT),Title: $(TITLE))
+$(file >>$(OUT),Depends: $(DEPENDS))
+$(file >>$(OUT),Provides: $(PROVIDES))
+$(file >>$(OUT),Type: ipkg)
+$(file >>$(OUT),Description: $(TITLE))
+$(file >>$(OUT),@@)
+$(file >>$(OUT), )
+endef
+$(foreach p,$(ovs_kmod_packages),$(eval $(call emit,$(p))))
+all:
+\t@:
+'''
+        subprocess.run(['make', '--no-print-directory', '-f', '-'], input=makefile,
+                       text=True, check=True, capture_output=True, timeout=5)
+        dump = metadata.read_text()
+        names = set(re.findall(r'^Package: (.+)$', dump, re.M))
+        dependencies = {token.split(':')[-1].lstrip('+')
+                        for line in re.findall(r'^Depends: (.*)$', dump, re.M)
+                        for token in line.split() if token.startswith('+')}
+        with metadata.open('a') as output:
+            for name in sorted(dependencies - names):
+                output.write(f'\nSource-Makefile: package/support/{name}/Makefile\n'
+                             f'Package: {name}\nCategory: Kernel modules\nTitle: {name}\n'
+                             f'Type: ipkg\nDescription: dependency fixture\n@@\n')
+        parsed = subprocess.run(['perl', str(tools / 'scripts/package-metadata.pl'), 'config', str(metadata)],
+                                text=True, check=True, capture_output=True, cwd=tools, timeout=5)
+        (tools / 'packages.in').write_text(parsed.stdout)
+        (tools / 'package/fixture').mkdir(parents=True)
+        (tools / 'package/fixture/image-config.in').touch()
+        header = 'mainmenu "Real OpenWrt metadata regression"\nconfig MODULES\n\tmodules\n\tbool\n\tdefault y\n'
+        header += ''.join(f'config {symbol}\n\tbool\n\tdefault y\n'
+                          for symbol in ('ALL_KMODS', 'DEVEL', 'IPV6', 'LINUX_6_6'))
+        (tools / 'Kconfig').write_text(header + 'source "packages.in"\n')
+        defaults = tools / 'defaults'
+        defaults.write_text('CONFIG_ALL_KMODS=y\nCONFIG_LINUX_6_6=y\n')
+        subprocess.run([str(conf), '--defconfig=' + str(defaults), 'Kconfig'], cwd=tools,
+                       env={**os.environ, 'KCONFIG_CONFIG': str(tools / 'result.config')},
+                       text=True, check=True, capture_output=True, timeout=5)
+        result = (tools / 'result.config').read_text()
+        selected = dict(re.findall(r'^CONFIG_([^=]+)=([my])$', result, re.M))
+        for suffix in ('', '-gre', '-vxlan', '-geneve', '-lisp', '-stt'):
+            self.assertNotIn('PACKAGE_kmod-openvswitch' + suffix + '-intree', selected)
+        for suffix in ('', '-gre', '-vxlan', '-geneve'):
+            self.assertEqual(selected.get('PACKAGE_kmod-openvswitch' + suffix), 'm')
+        self.assertEqual(selected['LINUX_6_6'], 'y')
+        self.assertEqual(selected['ALL_KMODS'], 'y')
+        # Re-run the same real toolchain on the original pinned recipe. The only
+        # normalized change must be the six unsupported package selections.
+        support = metadata.read_text()[len(dump):]
+        original = gzip.decompress((ROOT / 'tests/fixtures/openvswitch-packages-110d325-Makefile.gz').read_bytes()).decode()
+        original_section = original[original.index('ovs_kmod_packages:='):original.index('# Dependency review')]
+        metadata.write_text('Source-Makefile: feeds/packages/net/openvswitch/Makefile\n')
+        subprocess.run(['make', '--no-print-directory', '-f', '-'],
+                       input=makefile.replace(section, original_section), text=True,
+                       check=True, capture_output=True, timeout=5)
+        with metadata.open('a') as output:
+            output.write(support)
+        parsed = subprocess.run(['perl', str(tools / 'scripts/package-metadata.pl'), 'config', str(metadata)],
+                                text=True, check=True, capture_output=True, cwd=tools, timeout=5)
+        (tools / 'packages.in').write_text(parsed.stdout)
+        subprocess.run([str(conf), '--defconfig=' + str(defaults), 'Kconfig'], cwd=tools,
+                       env={**os.environ, 'KCONFIG_CONFIG': str(tools / 'original.config')},
+                       text=True, check=True, capture_output=True, timeout=5)
+        old = dict(re.findall(r'^CONFIG_([^=]+)=([my])$', (tools / 'original.config').read_text(), re.M))
+        removed = {'PACKAGE_kmod-openvswitch' + suffix + '-intree'
+                   for suffix in ('', '-gre', '-vxlan', '-geneve', '-lisp', '-stt')}
+        self.assertEqual({name: old[name] for name in removed}, dict.fromkeys(removed, 'm'))
+        self.assertEqual(set(old) - set(selected), removed)
+        self.assertEqual({name: value for name, value in old.items() if name not in removed}, selected)
+
+    def test_openvswitch_feed_pin_drift_refuses_before_applying_any_vendor_patch(self):
+        vendor_source_fixture(self.source)
+        profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        next(feed for feed in profile['feeds'] if feed['name'] == 'packages')['commit'] = '0' * 40
+        original = {path: path.read_bytes() for path in self.source.rglob('*') if path.is_file()}
+        with self.assertRaisesRegex(ValueError, 'feed.*pin'):
+            firmware.vendor_fixes(profile, self.source)
+        for path, data in original.items():
+            self.assertEqual(path.read_bytes(), data)
 
     def test_scheduler_policies_and_priorities_are_preserved(self):
         vendor_source_fixture(self.source)

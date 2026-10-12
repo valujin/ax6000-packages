@@ -185,6 +185,16 @@
       "before_sha256": "eaf4bf60521164c4b8d4fa837350eb16ca009d76e7d11e595cef0932613d2f41",
       "after_sha256": "23eea0c95fca939749f79104b73e0416ab7bb8760f40d7fa0ce636467df39b51",
       "fixture": "fibocom-mhi-private-header.h.gz"
+    },
+    {
+      "patch": "170-openvswitch-linux-6.6-intree-availability.patch",
+      "path": "feeds/packages/net/openvswitch/Makefile",
+      "sha256": "076b3b8460643d930db738eece6d8f15afb3e9d7e8b0555b7063fa884fc81ebd",
+      "before_sha256": "6db2bc64106cf79a18d94786ac9afb67c88cc7e8f47d0feb68bd0e786c4f48dd",
+      "after_sha256": "2d4fec90923b2e811ed4e95ce875f3966ee5a8491b07a7688ff64129ec2c689e",
+      "fixture": "openvswitch-packages-110d325-Makefile.gz",
+      "feed_name": "packages",
+      "feed_commit": "110d325c507051d78dac56d95d1c98a724eb0753"
     }
   ]
 }
