@@ -87,8 +87,10 @@ PY
     [[ $(git -C "$source_dir" rev-parse HEAD) == "$commit" ]] || fail 'resume source HEAD differs from pinned firmware commit'
     "${prepare[@]}" --phase repository-files
     "${prepare[@]}" --phase check-feeds
-    "${prepare[@]}" --phase verify
+    "${prepare[@]}" --phase ssl-selection
     cd -- "$source_dir"
+    make -j"$BUILD_JOBS" defconfig
+    "${prepare[@]}" --phase verify
     make -j"$BUILD_JOBS" world V=s
     "${prepare[@]}" --phase export --output-dir "$output"
     exit 0

@@ -44,6 +44,7 @@ def validate(profile, lock):
     image = profile.get("image_packages", [])
     prepare.require(isinstance(image, list) and all(name in profile["packages"] for name in image),
                     "image_packages must be a subset of requested packages")
+    ssl_symbols(profile)
     return profile
 
 
@@ -66,7 +67,7 @@ def configure(profile, lock, source):
                "CONFIG_ALL_KMODS=y\nCONFIG_DEVEL=y\nCONFIG_SDK=y\n"
                "# CONFIG_ALL is not set\n# CONFIG_ALL_NONSHARED is not set\n"
                "CONFIG_SIGNED_PACKAGES=y\nCONFIG_SIGNATURE_CHECK=y\n")
-    (source / ".config").write_text(config)
+    (source / ".config").write_text(set_symbols(config, ssl_symbols(profile)))
 
 
 def repository_files(source, check_only=False):
@@ -115,6 +116,35 @@ def set_symbols(config, values):
     return config.rstrip() + "\n" + "".join(
         f"CONFIG_{symbol}={value}\n" if value != "n" else f"# CONFIG_{symbol} is not set\n"
         for symbol, value in sorted(values.items()))
+
+
+def ssl_symbols(profile):
+    """Install the collection's SSL provider; keep the alternative as an IPK."""
+    image = set(profile.get("image_packages", []))
+    collections = image & {"luci-ssl", "luci-ssl-openssl"}
+    prepare.require(len(collections) <= 1, "image SSL collections luci-ssl and luci-ssl-openssl conflict")
+    if not collections:
+        return {}
+    openssl = "luci-ssl-openssl" in collections
+    return {"PACKAGE_libustream-openssl": "y" if openssl else "m",
+            "PACKAGE_libustream-mbedtls": "m" if openssl else "y"}
+
+
+def ssl_selection(profile, source):
+    """Repair userspace provider selection without repeating kernel selection."""
+    values = ssl_symbols(profile)
+    if values:
+        config = source / ".config"
+        config.write_text(set_symbols(config.read_text(), values))
+
+
+def verify_ssl(profile, config):
+    values = ssl_symbols(profile)
+    providers = set(re.findall(r"^CONFIG_PACKAGE_libustream-(openssl|mbedtls|wolfssl)=y$", config, re.M))
+    prepare.require(len(providers) <= 1, "multiple image SSL providers install /lib/libustream-ssl.so")
+    for symbol, value in values.items():
+        prepare.require(f"CONFIG_{symbol}={value}\n" in config,
+                        f"SSL provider selection requires {symbol}={value}")
 
 
 def apply_source_patch(source, spec, patch, check_only=False):
@@ -198,6 +228,7 @@ def select(profile, source):
     kmods = sorted(name for name in available if name.startswith("kmod-")) if profile.get("all_kmods", True) else []
     for name in sorted(requested | set(kmods)):
         values["PACKAGE_" + name] = "y" if name in baseline_y or name in profile.get("image_packages", []) else "m"
+    values.update(ssl_symbols(profile))
     config_path.write_text(set_symbols(config, values))
     report = {"profile": profile["id"], "requested": sorted(requested), "candidate_kmods": kmods,
               "source_commit": profile["firmware"]["commit"], "device": profile["build_source"]["device"],
@@ -216,6 +247,7 @@ def verify(profile, source):
     report = prepare.verify_selection(profile, source)
     prepare.require(report.get("source_patches") == patches, "selection report omits vendor patch provenance")
     config = (source / ".config").read_text()
+    verify_ssl(profile, config)
     enabled = set(re.findall(r"^CONFIG_TARGET_DEVICE_(.+)=y$", config, re.M))
     prepare.require(enabled == {"mediatek_filogic_DEVICE_xiaomi_redmi-router-ax6000-stock"},
                     "firmware selection includes another device or omits AX6000 stock")
@@ -480,7 +512,7 @@ def main():
     parser.add_argument("--lock", required=True, type=Path)
     parser.add_argument("--source-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--phase", choices=("validate", "configure", "repository-files", "check-feeds", "vendor-fixes", "overrides", "select", "verify", "export"), default="validate")
+    parser.add_argument("--phase", choices=("validate", "configure", "repository-files", "check-feeds", "vendor-fixes", "overrides", "select", "ssl-selection", "verify", "export"), default="validate")
     args = parser.parse_args()
     try:
         profile, lock = json.loads(args.profile.read_text()), json.loads(args.lock.read_text())
@@ -501,6 +533,7 @@ def main():
                        "vendor-fixes": lambda: vendor_fixes(profile, args.source_dir),
                        "overrides": lambda: overrides(profile, lock, args.source_dir),
                        "select": lambda: select(profile, args.source_dir),
+                       "ssl-selection": lambda: ssl_selection(profile, args.source_dir),
                        "verify": lambda: verify(profile, args.source_dir)}
             actions[args.phase]()
     except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
