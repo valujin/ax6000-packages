@@ -1,4 +1,5 @@
 """A resume must remove stale stock factory/catalog files before rebuilding."""
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -50,14 +51,25 @@ class ImageCacheReset(unittest.TestCase):
         self.assertEqual(self.receipt.read_bytes(), first)
 
     def test_real_cli_phase_accepts_external_receipt_and_removes_only_stock_cache(self):
+        profile_file = ROOT / 'profiles/redmi-ax6000-new.json'
+        lock_file = self.root / 'lock.json'
+        lock_file.write_text(json.dumps({
+            'schema_version': 1,
+            'profile_id': self.profile['id'],
+            'profile_sha256': hashlib.sha256(profile_file.read_bytes()).hexdigest(),
+            'feeds': {feed['name']: feed['commit'] for feed in self.profile['feeds']},
+        }))
         subprocess.run([sys.executable, str(ROOT / 'scripts/prepare-firmware.py'),
-                        '--profile', str(ROOT / 'profiles/redmi-ax6000-new.json'),
-                        '--lock', str(ROOT / 'state/new-lock.json'),
+                        '--profile', str(profile_file),
+                        '--lock', str(lock_file),
                         '--source-dir', str(self.source), '--phase', 'reset-cached-images',
                         '--cleanup-receipt', str(self.receipt)], check=True, capture_output=True)
         self.assertTrue(self.receipt.is_file())
         self.assertTrue(all(not (self.source / p).exists() for p in self.paths))
         self.assertEqual(self.other.read_bytes(), b'other')
+        self.assertEqual((self.source / '.config').read_bytes(), b'CONFIG_FIXED=y\n')
+        self.assertEqual(json.loads(self.receipt.read_text())['source_commit'],
+                         self.profile['firmware']['commit'])
 
     def test_symlink_target_or_parent_refused_before_any_deletion(self):
         target = self.source / self.paths[2]
