@@ -135,7 +135,37 @@ def ssl_selection(profile, source):
     values = ssl_symbols(profile)
     if values:
         config = source / ".config"
-        config.write_text(set_symbols(config.read_text(), values))
+        root = source.resolve()
+        prepare.require(config.is_file() and not config.is_symlink()
+                        and config.resolve().is_relative_to(root), "SSL configuration is missing or a symlink")
+        updated = set_symbols(config.read_text(), values)
+        inactive = next(symbol.removeprefix("PACKAGE_libustream-")
+                        for symbol, value in values.items() if value == "m")
+        staging = source / "staging_dir"
+        prepare.require(not staging.is_symlink(), "SSL install stamp staging directory is a symlink")
+        stale = []
+        # A y recipe's image list reads every built variant. Demoting one variant
+        # to m does not run prepare-package-install to clear its old y stamp.
+        for info in sorted(staging.glob("target-*/pkginfo")):
+            prepare.require(info.is_dir() and info.resolve().is_relative_to(root)
+                            and not info.is_symlink()
+                            and not any(parent.is_symlink() for parent in info.parents
+                                        if parent != source and parent.is_relative_to(source)),
+                            f"SSL install stamp directory is outside source or a symlink: {info}")
+            stamp = info / f"ustream-ssl.{inactive}.install"
+            for path in (stamp, stamp.with_name(stamp.name + ".flags")):
+                if path.exists() or path.is_symlink():
+                    prepare.require(path.is_file() and not path.is_symlink()
+                                    and path.resolve().is_relative_to(root),
+                                    f"SSL install stamp is not a regular source file: {path}")
+                    if path == stamp:
+                        prepare.require(path.read_bytes() == f"libustream-{inactive}\n".encode(),
+                                        f"SSL install stamp has unexpected packages: {path}")
+                    stale.append(path)
+        # Complete preflight before changing either the config or cached metadata.
+        for path in stale:
+            path.unlink()
+        config.write_text(updated)
 
 
 def verify_ssl(profile, config):

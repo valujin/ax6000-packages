@@ -123,8 +123,145 @@ class FirmwareSSLTests(unittest.TestCase):
 
     def test_profile_without_image_ssl_preserves_provider_selection(self):
         self.profile["image_packages"] = []
+        info = self.pkginfo()
+        stamp = info / "ustream-ssl.openssl.install"
+        stamp.write_text("libustream-openssl\n")
         firmware.ssl_selection(self.profile, self.source)
         self.assertEqual((self.source / ".config").read_text(), BASE)
+        self.assertEqual(stamp.read_text(), "libustream-openssl\n")
+
+    def pkginfo(self, target="target-fixture"):
+        info = self.source / "staging_dir" / target / "pkginfo"
+        info.mkdir(parents=True)
+        return info
+
+    def install_list(self, info):
+        # package/Makefile reads ALL selected variants for a recipe in package-y,
+        # including stale metadata for a variant whose package was demoted to m.
+        result = subprocess.run(["make", "--no-print-directory", "-f", "-"],
+            input=f'''variants := mbedtls openssl
+all:
+\t@printf '%s\\n' "$(shell cat $(foreach v,$(variants),{info}/ustream-ssl.$(v).install) 2>/dev/null)"
+''', text=True, capture_output=True, check=True, timeout=5)
+        return result.stdout.split()
+
+    def test_stale_variant_cleanup_prevents_shared_recipe_rootfs_clash_and_retains_ipks(self):
+        info = self.pkginfo()
+        protected = {info / "ustream-ssl.mbedtls.install": b"libustream-mbedtls\n",
+                     info / "ustream-ssl.mbedtls.install.flags": b"activeflag\n",
+                     info / "other.default.install": b"other\n",
+                     self.source / "alternative.ipk": b"built OpenSSL alternative IPK",
+                     self.source / "build_dir/kernel/.config": b"CONFIG_ARM64=y\n",
+                     self.source / "build_dir/kernel/.vermagic": b"6ea4b96ad26e951cc0b4fa9296a521d3\n",
+                     self.source / "build_dir/kernel/Module.symvers": b"frozen kernel symbols\n"}
+        for path, content in protected.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        inactive = info / "ustream-ssl.openssl.install"
+        inactive.write_text("libustream-openssl\n")
+        flags = inactive.with_name(inactive.name + ".flags")
+        flags.write_text("\n")
+        self.assertEqual(self.install_list(info), ["libustream-mbedtls", "libustream-openssl"])
+        firmware.ssl_selection(self.profile, self.source)
+        self.assertEqual(self.install_list(info), ["libustream-mbedtls"])
+        self.assertFalse(inactive.exists())
+        self.assertFalse(flags.exists())
+        for path, content in protected.items():
+            self.assertEqual(path.read_bytes(), content)
+        self.assert_mbedtls_image()
+        firmware.ssl_selection(self.profile, self.source)
+        self.assertEqual(self.install_list(info), ["libustream-mbedtls"])
+
+    def test_openssl_image_cleans_only_stale_mbedtls_variant_and_orphaned_flags(self):
+        self.profile["image_packages"] = ["luci-ssl-openssl"]
+        info = self.pkginfo()
+        active = info / "ustream-ssl.openssl.install"
+        active.write_text("libustream-openssl\n")
+        inactive = info / "ustream-ssl.mbedtls.install"
+        inactive.write_text("libustream-mbedtls\n")
+        flags = inactive.with_name(inactive.name + ".flags")
+        flags.write_text("\n")
+        firmware.ssl_selection(self.profile, self.source)
+        self.assertEqual(self.install_list(info), ["libustream-openssl"])
+        self.assertFalse(flags.exists())
+        flags.write_text("\n")
+        firmware.ssl_selection(self.profile, self.source)
+        self.assertFalse(flags.exists())
+        self.assertEqual(active.read_text(), "libustream-openssl\n")
+
+    def test_unexpected_inactive_stamp_refuses_before_config_or_any_other_stamp_changes(self):
+        first, second = self.pkginfo("target-first"), self.pkginfo("target-second")
+        first_stamp = first / "ustream-ssl.openssl.install"
+        first_stamp.write_text("libustream-openssl\n")
+        second_stamp = second / "ustream-ssl.openssl.install"
+        for content in ("unexpected-package\n", "libustream-openssl\nother\n", ""):
+            with self.subTest(content=content):
+                second_stamp.write_text(content)
+                with self.assertRaisesRegex(ValueError, "SSL.*stamp"):
+                    firmware.ssl_selection(self.profile, self.source)
+                self.assertEqual((self.source / ".config").read_text(), BASE)
+                self.assertEqual(first_stamp.read_text(), "libustream-openssl\n")
+                self.assertEqual(second_stamp.read_text(), content)
+
+    def test_ssl_stamp_symlink_or_directory_refuses_before_mutation(self):
+        info = self.pkginfo()
+        stamp = info / "ustream-ssl.openssl.install"
+        stamp.write_text("libustream-openssl\n")
+        outside = self.source / "outside-stamp"
+        outside.write_text("libustream-openssl\n")
+        flags = info / "ustream-ssl.openssl.install.flags"
+        flags.symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, "SSL.*stamp"):
+            firmware.ssl_selection(self.profile, self.source)
+        self.assertEqual((self.source / ".config").read_text(), BASE)
+        self.assertEqual(stamp.read_text(), "libustream-openssl\n")
+        self.assertEqual(outside.read_text(), "libustream-openssl\n")
+        flags.unlink()
+        stamp.unlink()
+        stamp.mkdir()
+        with self.assertRaisesRegex(ValueError, "SSL.*stamp"):
+            firmware.ssl_selection(self.profile, self.source)
+        self.assertEqual((self.source / ".config").read_text(), BASE)
+
+    def test_ssl_stamp_parent_symlink_is_refused_even_when_it_stays_inside_source(self):
+        info = self.pkginfo()
+        relocated = self.source / "relocated-pkginfo"
+        info.rename(relocated)
+        info.symlink_to(relocated, target_is_directory=True)
+        stamp = relocated / "ustream-ssl.openssl.install"
+        stamp.write_text("libustream-openssl\n")
+        with self.assertRaisesRegex(ValueError, "SSL.*stamp"):
+            firmware.ssl_selection(self.profile, self.source)
+        self.assertEqual((self.source / ".config").read_text(), BASE)
+        self.assertEqual(stamp.read_text(), "libustream-openssl\n")
+
+    def test_ssl_stamp_target_symlink_escape_is_refused_before_config_write(self):
+        external = tempfile.TemporaryDirectory()
+        self.addCleanup(external.cleanup)
+        outside = Path(external.name)
+        (outside / "pkginfo").mkdir()
+        stamp = outside / "pkginfo/ustream-ssl.openssl.install"
+        stamp.write_text("libustream-openssl\n")
+        staging = self.source / "staging_dir"
+        staging.mkdir()
+        (staging / "target-escaped").symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "SSL.*stamp"):
+            firmware.ssl_selection(self.profile, self.source)
+        self.assertEqual((self.source / ".config").read_text(), BASE)
+        self.assertEqual(stamp.read_text(), "libustream-openssl\n")
+
+    def test_ssl_selection_refuses_symlink_configuration_before_removing_stamps(self):
+        info = self.pkginfo()
+        stamp = info / "ustream-ssl.openssl.install"
+        stamp.write_text("libustream-openssl\n")
+        config = self.source / ".config"
+        replacement = self.source / "other.config"
+        config.rename(replacement)
+        config.symlink_to(replacement)
+        with self.assertRaisesRegex(ValueError, "SSL configuration"):
+            firmware.ssl_selection(self.profile, self.source)
+        self.assertEqual(replacement.read_text(), BASE)
+        self.assertEqual(stamp.read_text(), "libustream-openssl\n")
 
     def test_ssl_selection_cli_preserves_profile_and_lock(self):
         profile_path, lock_path = self.source / "profile.json", self.source / "lock.json"
