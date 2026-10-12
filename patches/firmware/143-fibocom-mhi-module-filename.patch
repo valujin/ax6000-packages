@@ -1,16 +1,20 @@
-Fibocom MHI: package and autoload the actual fibo_mhi kernel module.
+Fibocom MHI: package the actual module and declare the native bus alternative.
 
 The pinned src/Makefile declares obj-m := fibo_mhi.o and its component list.
 Keep the existing KernelPackage name, dependencies, selection and priority.
+Both this private vendor stack and the native MHI module register a bus named
+mhi; keep all packages available but prevent their incompatible coinstallation.
+Preserve the vendor bus/device/sysfs names expected by modem userspace.
 
 --- a/package/mtk/applications/5g-modem/fibocom_MHI/Makefile
 +++ b/package/mtk/applications/5g-modem/fibocom_MHI/Makefile
-@@ -18,8 +18,8 @@
+@@ -18,8 +18,9 @@
    SUBMENU:=WWAN Support
    TITLE:=Kernel pcie driver for MHI device
    DEPENDS:=+pciids +pciutils +fibocom-dial
 -  FILES:=$(PKG_BUILD_DIR)/pcie_mhi_fb.ko
 -  AUTOLOAD:=$(call AutoLoad,90,pcie_mhi_fb)
++  CONFLICTS:=kmod-mhi-bus
 +  FILES:=$(PKG_BUILD_DIR)/fibo_mhi.ko
 +  AUTOLOAD:=$(call AutoLoad,90,fibo_mhi)
  endef

@@ -90,9 +90,9 @@
     {
       "patch": "143-fibocom-mhi-module-filename.patch",
       "path": "package/mtk/applications/5g-modem/fibocom_MHI/Makefile",
-      "sha256": "d9f8b50a34d5ac4f79ab1b24839e79d28afda09b373ed201467accb7009608f9",
+      "sha256": "d857a13556ec4d4a8f575235794034089fe177f384b444e9f9c13423fb902efb",
       "before_sha256": "c7e124e097a12815f7642e1bef9531ad91c97b13e26c3374d4f8098d831f9123",
-      "after_sha256": "4601a38162382041c7deb76edd27ce66d70c6b7fd883277568e1941a5e36a0e3"
+      "after_sha256": "22a32cad3d4058af39b46905705039a321a3d6a4a4a49eeb8344908897d83a49"
     },
     {
       "patch": "150-quectel-gobinet-linux-6.6-netdev.patch",

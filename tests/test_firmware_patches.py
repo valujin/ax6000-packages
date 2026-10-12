@@ -205,6 +205,8 @@ class FirmwarePatchTests(unittest.TestCase):
         self.assertIn('FILES:=$(PKG_BUILD_DIR)/fibo_mhi.ko', text)
         self.assertIn('AUTOLOAD:=$(call AutoLoad,90,fibo_mhi)', text)
         self.assertIn('define KernelPackage/pcie_mhi_fb\n', text)
+        self.assertIn('CONFLICTS:=kmod-mhi-bus\n', text,
+                      'the private Fibocom bus and native MHI bus share their runtime name')
 
     def test_fibocom_legacy_termios_copy_preserves_extended_speeds_and_fault_atomicity(self):
         vendor_source_fixture(self.source)
