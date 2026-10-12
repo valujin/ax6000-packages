@@ -298,7 +298,7 @@ all:
         shutil.copy2(ROOT / "scripts/build-firmware.sh", scripts / "build-firmware.sh")
         (scripts / "prepare-firmware.py").write_text('''import argparse, importlib.util, json, os, pathlib, subprocess, sys
 p = argparse.ArgumentParser()
-for name in ("profile", "lock", "source-dir", "output-dir", "phase"):
+for name in ("profile", "lock", "source-dir", "output-dir", "phase", "cleanup-receipt"):
     p.add_argument("--" + name)
 a = p.parse_args()
 real = pathlib.Path(os.environ["REAL_FIRMWARE_PREPARE"])
@@ -311,6 +311,11 @@ if a.phase in ("validate", "repository-files", "ssl-selection"):
     subprocess.run([sys.executable, str(real)] + sys.argv[1:], check=True)
 elif a.phase == "check-feeds":
     pass
+elif a.phase == "reset-cached-images":
+    if not (source / "verified").is_file():
+        raise SystemExit("cache cleanup ran before verification")
+    assert pathlib.Path(a.cleanup_receipt).parent.is_dir()
+    (source / "cache-reset").touch()
 elif a.phase == "verify":
     if not (source / "normalized").is_file():
         raise SystemExit("verify ran before defconfig")
@@ -335,6 +340,7 @@ if "defconfig" in sys.argv:
     pathlib.Path("normalized").touch()
 elif "world" in sys.argv:
     assert pathlib.Path("verified").is_file()
+    assert pathlib.Path("cache-reset").is_file()
     pathlib.Path("world-complete").touch()
 else:
     raise SystemExit("unexpected build target")
