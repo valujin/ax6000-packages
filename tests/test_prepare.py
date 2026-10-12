@@ -294,6 +294,36 @@ class PrepareTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ARM64"):
             prepare.validate(self.profile, self.lock)
 
+    def test_static_tailscale_package_strip_preserves_prebuilt_executable_bytes(self):
+        # package-pack.mk runs $(RSTRIP) on the installed package directory.
+        # A destructive default represents USE_SSTRIP; the recipe must disable it.
+        (self.sdk / "include").mkdir()
+        (self.sdk / "rules.mk").write_text("")
+        (self.sdk / "include/package.mk").write_text(
+            "RSTRIP:=python3 $(TOPDIR)/destructive-strip.py\n"
+            "BuildPackage=\n")
+        (self.sdk / "destructive-strip.py").write_text(
+            "from pathlib import Path\nimport sys\n"
+            "for p in Path(sys.argv[1]).rglob('*'):\n"
+            " if p.is_file(): p.write_bytes(b'stripped')\n")
+        stage = self.sdk / "stage/usr/sbin"
+        stage.mkdir(parents=True)
+        originals = {name: b"\x7fELF\x02\x01\x01" + name.encode() + bytes(range(256))
+                     for name in ("tailscale", "tailscaled")}
+        for name, data in originals.items():
+            (stage / name).write_bytes(data)
+            (stage / name).chmod(0o755)
+        recipe = prepare.static_tailscale_recipe({"version": "1.104.1", "sha256": "f" * 64})
+        (self.sdk / "Makefile").write_text(recipe +
+            "\nprobe:\n\t$(RSTRIP) $(TOPDIR)/stage\n\t@echo $(PKG_VERSION)-$(PKG_RELEASE)\n")
+        output = subprocess.check_output(
+            ["make", "-r", "-s", "-j1", "probe", "TOPDIR=" + str(self.sdk),
+             "INCLUDE_DIR=" + str(self.sdk / "include")], cwd=self.sdk, text=True)
+        for name, data in originals.items():
+            self.assertEqual((stage / name).read_bytes(), data)
+            self.assertEqual((stage / name).stat().st_mode & 0o777, 0o755)
+        self.assertEqual(output.strip(), "1.104.1-2")
+
     def test_resource_limit_enforces_affinity_and_rejects_excess_jobs(self):
         available = sorted(os.sched_getaffinity(0))
         cap = max(1, len(available) // 2)

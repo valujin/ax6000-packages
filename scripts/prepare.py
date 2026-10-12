@@ -137,7 +137,7 @@ def static_tailscale_recipe(override):
 
 PKG_NAME:=tailscale
 PKG_VERSION:=""" + override["version"] + """
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_SOURCE:=tailscale_$(PKG_VERSION)_arm64.tgz
 PKG_SOURCE_URL:=https://pkgs.tailscale.com/stable
 PKG_HASH:=""" + override["sha256"] + """
@@ -145,6 +145,9 @@ PKG_BUILD_DIR:=$(BUILD_DIR)/tailscale_$(PKG_VERSION)_arm64
 PKG_LICENSE:=BSD-3-Clause
 
 include $(INCLUDE_DIR)/package.mk
+
+# Preserve the official prebuilt Go executables; sstrip corrupts their ELF sections.
+RSTRIP:=:
 
 define Package/tailscale
   SECTION:=net
