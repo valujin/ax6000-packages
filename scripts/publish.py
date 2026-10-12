@@ -183,12 +183,28 @@ def public_from_secret(key):
     return 'untrusted comment: ax6000-packages public key\n' + base64.b64encode(public).decode() + '\n'
 
 
+def public_key_payload(text):
+    """Compare the usign key payload, whose comment is intentionally untrusted."""
+    lines = text.splitlines()
+    if len(lines) != 2 or not lines[0].startswith('untrusted comment:'):
+        raise ValueError('Invalid pinned public key')
+    try:
+        data = base64.b64decode(lines[1], validate=True)
+    except ValueError as error:
+        raise ValueError('Invalid pinned public key') from error
+    if len(data) != 42 or data[:2] != b'Ed':
+        raise ValueError('Invalid pinned public key')
+    return data
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', required=True, type=Path)
     parser.add_argument('--input', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--key', required=True, type=Path)
+    parser.add_argument('--public-key', type=Path,
+                        help='Require the signing secret to match this pinned usign public key')
     parser.add_argument('--usign', required=True, type=Path)
     parser.add_argument('--lock', required=True, type=Path)
     args = parser.parse_args()
@@ -200,14 +216,26 @@ def main():
     lock = json.loads(args.lock.read_text())
     if lock.get('profile_sha256') != hashlib.sha256(args.profile.read_bytes()).hexdigest():
         raise ValueError('Lock does not match profile')
+    derived_public = public_from_secret(args.key)
+    if args.public_key is not None:
+        try:
+            pinned_public = args.public_key.read_text()
+        except (OSError, UnicodeError) as error:
+            raise ValueError('Invalid pinned public key') from error
+        if public_key_payload(pinned_public) != public_key_payload(derived_public):
+            raise ValueError('Signing key differs from pinned public key')
     feed = stage_feed(args.input, args.output, profile)
     public_key = args.output / 'repository.pub'
     usign = str(args.usign.resolve())
-    public_key.write_text(public_from_secret(args.key))
+    public_key.write_text(derived_public)
     subprocess.run([usign, '-S', '-m', str(feed / 'Packages'), '-s', str(args.key.resolve()),
                     '-x', str(feed / 'Packages.sig')], check=True)
     subprocess.run([usign, '-V', '-m', str(feed / 'Packages'), '-p', str(public_key),
                     '-x', str(feed / 'Packages.sig')], check=True)
+    if args.public_key is not None:
+        subprocess.run([usign, '-V', '-m', str(feed / 'Packages'),
+                        '-p', str(args.public_key.resolve()),
+                        '-x', str(feed / 'Packages.sig')], check=True)
     firmware_dir = stage_firmware(args.input, args.output, profile)
     state = args.output / 'state'
     state.mkdir()

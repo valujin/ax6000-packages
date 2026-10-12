@@ -1,5 +1,6 @@
 """Real signing integration; set USIGN to an OpenWrt host usign executable."""
 import gzip
+import base64
 import hashlib
 import io
 import json
@@ -250,12 +251,44 @@ class RealSigningIntegration(unittest.TestCase):
         self.lock_file.write_text(json.dumps(self.lock))
         self.output = self.root / 'public'
 
-    def publish(self):
+    def publish(self, *extra):
         return subprocess.run(['python3', str(ROOT / 'scripts/publish.py'),
                                '--profile', str(self.profile_file), '--input', str(self.raw),
                                '--output', str(self.output), '--key', str(self.key),
-                               '--usign', USIGN, '--lock', str(self.lock_file)],
+                               '--usign', USIGN, '--lock', str(self.lock_file), *extra],
                               text=True, capture_output=True)
+
+    def test_matching_pinned_key_publishes_signature_verifiable_by_firmware_key(self):
+        ipk(self.raw / 'wireguard.ipk', kernel=self.profile['firmware']['kernel_version'])
+        result = self.publish('--public-key', str(self.original_public))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        feed = self.output / 'feeds/router' / self.profile['firmware']['kernel_version']
+        verified = subprocess.run([USIGN, '-V', '-m', str(feed / 'Packages'),
+                                   '-p', str(self.original_public), '-x', str(feed / 'Packages.sig')],
+                                  capture_output=True)
+        self.assertEqual(verified.returncode, 0, verified.stderr.decode())
+
+    def test_different_signing_key_refuses_before_creating_publication_output(self):
+        ipk(self.raw / 'wireguard.ipk', kernel=self.profile['firmware']['kernel_version'])
+        foreign_public = self.root / 'foreign.pub'
+        subprocess.run([USIGN, '-G', '-s', str(self.root / 'foreign.key'), '-p', str(foreign_public)],
+                       check=True, capture_output=True)
+        result = self.publish('--public-key', str(foreign_public))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Signing key differs from pinned public key', result.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_malformed_pinned_key_refuses_before_creating_publication_output(self):
+        ipk(self.raw / 'wireguard.ipk', kernel=self.profile['firmware']['kernel_version'])
+        malformed = self.root / 'malformed.pub'
+        for payload in ['not-base64', base64.b64encode(b'wrong-format').decode(),
+                        base64.b64encode(b'XX' + bytes(40)).decode()]:
+            with self.subTest(payload=payload):
+                malformed.write_text('untrusted comment: fixture\n' + payload + '\n')
+                result = self.publish('--public-key', str(malformed))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Invalid pinned public key', result.stderr)
+                self.assertFalse(self.output.exists())
 
     def test_real_signed_publication_verifies_decompressed_opkg_index(self):
         package = self.raw / 'kmod-wireguard_1_aarch64_cortex-a53.ipk'

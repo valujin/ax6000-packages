@@ -184,7 +184,8 @@ jobs:
           chmod 600 "$key"
           unset OPKG_SIGNING_KEY
           python3 scripts/publish.py --profile "$PROFILE" --input raw \
-            --output public --key "$key" --usign raw/usign --lock state/lock.json
+            --output public --key "$key" --public-key keys/repository.pub \
+            --usign raw/usign --lock state/lock.json
       - name: Enforce the complete Pages site size limit
         run: |
           python3 - <<'PY'

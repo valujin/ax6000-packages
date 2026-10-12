@@ -124,7 +124,8 @@ jobs:
           chmod 600 "$key"
           unset OPKG_SIGNING_KEY
           python3 scripts/publish.py --profile raw/profile.json --input raw \
-            --output public --key "$key" --usign raw/usign --lock raw/lock.json
+            --output public --key "$key" --public-key keys/repository.pub \
+            --usign raw/usign --lock raw/lock.json
       - name: Check complete Pages artifact size
         if: inputs.publish
         run: |
