@@ -453,11 +453,99 @@ def select_packages(profile, sdk):
     return report
 
 
+def native_dependency_groups(value, label):
+    groups = []
+    if not value.strip():
+        return groups
+    for group in value.split(","):
+        names = set()
+        for alternative in group.split("|"):
+            match = re.fullmatch(r"\s*([A-Za-z0-9][A-Za-z0-9_.+\-]*)"
+                                 r"(?:\s*\((?:>=|<=|>>|<<|!=|=|>|<)\s*[^\s()]+\))?\s*", alternative)
+            require(match is not None, f"invalid native {label}: {alternative!r}")
+            names.add(match[1])
+        groups.append(names)
+    return groups
+
+
+def required_native_kmods(baseline, config):
+    """Follow final verified controls: SDK menus omit native dependency edges."""
+    from publish import read_control
+    controls = {name: read_control(path) for name, path in baseline.items()}
+    providers = {}
+    for name, control in controls.items():
+        provided = {name}
+        for group in native_dependency_groups(control.get("Provides", ""), f"Provides for {name}"):
+            provided.update(group)
+        for provided_name in provided:
+            providers.setdefault(provided_name, set()).add(name)
+    selected = set(re.findall(r"^CONFIG_PACKAGE_(.+)=[my]$", config, re.M))
+    pending = {name for name in selected & baseline.keys() if name.startswith("kmod-")}
+    closure = set()
+    # These packages describe the fixed SDK toolchain/kernel; never refresh them
+    # through a native module dependency selection.
+    fixed = {"kernel", "libc", "libgcc", "libpthread", "librt"}
+    while pending:
+        name = pending.pop()
+        if name in closure:
+            continue
+        closure.add(name)
+        for group in native_dependency_groups(controls[name].get("Depends", ""), f"Depends for {name}"):
+            if group & fixed:
+                continue
+            candidates = set().union(*(providers.get(dependency, set()) for dependency in group))
+            require(bool(candidates), f"native dependency unavailable: {name} -> " + " | ".join(sorted(group)))
+            # Keep all verified alternatives conservatively, as the SDK baseline
+            # does when retaining its immutable runtime dependency inventory.
+            pending.update(candidates - closure - fixed)
+    return {name for name in closure if name.startswith("kmod-")}
+
+
+def close_native(profile, sdk):
+    baseline = baseline_packages(profile, sdk)
+    if not baseline:
+        return False
+    config = sdk / ".config"
+    report_path = sdk / "build-selection.json"
+    require(config.is_file() and not config.is_symlink() and report_path.is_file()
+            and not report_path.is_symlink(), "native closure configuration/report must be regular SDK files")
+    text = config.read_text()
+    selected = set(re.findall(r"^CONFIG_PACKAGE_(.+)=[my]$", text, re.M))
+    required = required_native_kmods(baseline, text)
+    refresh = sdk_refresh_defaults(profile, sdk, baseline, selected | required)
+    snapshot = sdk / "Config-build.in"
+    booleans = set(re.findall(r"^config (PACKAGE_[^\s]+)\n[ \t]+bool[ \t]*(?:\n|$)",
+                             snapshot.read_text() if snapshot.is_file() else "", re.M))
+    changed = False
+    for name in sorted(required):
+        if name in selected:
+            continue
+        value = "y" if "PACKAGE_" + name in booleans else "m"
+        text = re.sub(r"^(?:# )?CONFIG_PACKAGE_" + re.escape(name) + r"(?:=.*| is not set)\n?", "", text, flags=re.M)
+        text = text.rstrip() + f"\nCONFIG_PACKAGE_{name}={value}\n"
+        changed = True
+    report = json.loads(report_path.read_text())
+    report["required_native_kmods"] = sorted(required)
+    if refresh:
+        path, defaults, config_in, refreshed = refresh
+        if not path.exists() or path.read_text() != defaults or config_in.read_text() != refreshed:
+            changed = True
+            path.write_text(defaults)
+            config_in.write_text(refreshed)
+    if changed:
+        config.write_text(text)
+    report_path.write_text(json.dumps(report, indent=2) + "\n")
+    return changed
+
+
 def verify_selection(profile, sdk):
     report = json.loads((sdk / "build-selection.json").read_text())
     config = (sdk / ".config").read_text()
     selected = set(re.findall(r"^CONFIG_PACKAGE_(.+)=[my]$", config, re.M))
     baseline = baseline_packages(profile, sdk)
+    required = required_native_kmods(baseline, config)
+    require(required <= selected, "native dependency selection unresolved after defconfig: "
+            + ", ".join(sorted(required - selected)))
     missing = sorted(set(profile["packages"]) - selected - baseline.keys())
     require(not missing, "requested packages unresolved after defconfig: " + ", ".join(missing))
     for language in profile.get("luci_languages", []):
@@ -468,6 +556,7 @@ def verify_selection(profile, sdk):
     report["selected_kmods"] = sorted(set(report["candidate_kmods"]) & selected)
     report["incompatible_kmods"] = sorted(set(report["candidate_kmods"]) - selected)
     report["firmware"] = profile["firmware"]
+    report["required_native_kmods"] = sorted(required)
     (sdk / "build-selection.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
@@ -483,7 +572,10 @@ def export_packages(profile, lock, sdk, output, sdk_archive=None):
     for path in sorted(built):
         control = read_control(path)
         validate_package(control, profile)
-        packages[control["Package"]] = path
+        name = control["Package"]
+        if name in baseline and (name.startswith("kmod-") or name == "kernel"):
+            continue
+        packages[name] = path
     require(set(profile["packages"]) <= packages.keys(),
             "SDK produced no output for requested packages: " + ", ".join(sorted(set(profile["packages"]) - packages.keys())))
     signer = sdk / "staging_dir/host/bin/usign"
@@ -527,7 +619,7 @@ def main():
     parser.add_argument("--lock", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--sdk-archive", type=Path)
-    parser.add_argument("--phase", choices=("validate", "feeds", "check-feeds", "overrides", "check-sdk", "check-kernel", "select", "verify", "export"), default="feeds")
+    parser.add_argument("--phase", choices=("validate", "feeds", "check-feeds", "overrides", "check-sdk", "check-kernel", "select", "close-native", "verify", "export"), default="feeds")
     parser.add_argument("--inspect-sdk", choices=("url", "sha256", "id"))
     parser.add_argument("--extract", type=Path)
     parser.add_argument("--extract-dir", type=Path)
@@ -557,6 +649,7 @@ def main():
                    "check-kernel": lambda: check_kernel(profile, args.sdk_dir),
                    "check-sdk": lambda: check_sdk_identity(profile, args.sdk_dir),
                    "select": lambda: select_packages(profile, args.sdk_dir),
+                   "close-native": lambda: close_native(profile, args.sdk_dir),
                    "verify": lambda: verify_selection(profile, args.sdk_dir)}
         result = actions[args.phase]()
         if result is not None:

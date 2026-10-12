@@ -84,6 +84,18 @@ make -j"$BUILD_JOBS" defconfig
 "${prepare[@]}" --phase check-kernel
 "${prepare[@]}" --phase select
 make -j"$BUILD_JOBS" defconfig
+# Hidden native module dependency edges are absent from SDK menus. Restore
+# their verified baseline closure and normalize until no selection changes.
+native_closed=false
+for native_pass in {1..8}; do
+    native_changed=$("${prepare[@]}" --phase close-native)
+    case "$native_changed" in
+        false) native_closed=true; break ;;
+        true) make -j"$BUILD_JOBS" defconfig ;;
+        *) fail 'unexpected native dependency closure result' ;;
+    esac
+done
+[[ $native_closed == true ]] || fail 'native dependency closure did not converge'
 "${prepare[@]}" --phase verify
 # Explicit targets exclude target/install and image generation.
 make -j"$BUILD_JOBS" package/compile V=s
