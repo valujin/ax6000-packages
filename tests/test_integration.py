@@ -61,6 +61,7 @@ class FirmwareExportIntegration(unittest.TestCase):
             profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
             profile['packages'] = ['kmod-wireguard', 'kmod-amneziawg', 'fw-helper-live']
             profile['image_packages'] = []
+            profile['package_only'] = []
             profile['build_source']['publication_url'] = 'https://example.com/packages'
             profile_path = root / 'profile.json'
             profile_path.write_text(json.dumps(profile))

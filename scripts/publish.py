@@ -125,14 +125,26 @@ def stage_feed(raw, output, profile):
     return feed
 
 
-def stage_firmware(raw, output, profile):
+def firmware_files(raw, profile):
+    """Validate the entire firmware plan before any feed/output is created."""
+    raw = Path(raw)
+    policy = profile.get('package_only', [])
+    if not isinstance(policy, list):
+        raise ValueError('Invalid firmware package_only policy')
+    factory_required = 'tailscale' in policy
     if not (Path(raw) / 'bin').is_dir():
+        if factory_required:
+            raise ValueError('Stock factory UBI is required for package_only Tailscale')
         return None
     targets = Path(raw) / 'bin' / 'targets' / profile['firmware']['target'] / profile['firmware']['subtarget']
     if not targets.is_dir():
+        if factory_required:
+            raise ValueError('Stock factory UBI is required for package_only Tailscale')
         return None
+    if targets.is_symlink() or not targets.resolve().is_relative_to(raw.resolve()) or any(
+            p.is_symlink() for p in targets.parents if p.is_relative_to(raw)):
+        raise ValueError('Firmware target directory is outside raw or a symlink')
     build_id = firmware_build_id(profile)
-    destination = Path(output) / 'firmware' / build_id
     sdk = profile.get('sdk', {})
     sdk_name = Path(urlsplit(sdk.get('url', '')).path).name
     # RAM BL2 variants and generic kernel components share BIN_DIR with device
@@ -141,21 +153,44 @@ def stage_firmware(raw, output, profile):
     images = []
     if device == 'xiaomi_redmi-router-ax6000-stock':
         marker = '-' + device + '-'
-        images = [p for p in targets.iterdir() if p.is_file() and marker in p.name
+        images = [p for p in targets.iterdir() if marker in p.name
                   and (p.name.endswith(marker + 'squashfs-sysupgrade.bin')
-                       or p.name.endswith(marker + 'initramfs-kernel.bin'))]
+                       or p.name.endswith(marker + 'initramfs-kernel.bin')
+                       or p.name.endswith(marker + 'initramfs-factory.ubi'))]
+    factories = [p for p in images if p.name.endswith('-initramfs-factory.ubi')]
+    if len(factories) > 1 or (factory_required and len(factories) != 1):
+        raise ValueError('Exactly one native stock factory UBI is required')
     metadata = {'config.buildinfo', 'feeds.buildinfo', 'version.buildinfo', 'profiles.json'}
     for image in images:
         prefix = image.name.split('-' + device + '-', 1)[0]
         metadata.update({prefix + '.manifest', prefix + '-' + device + '.manifest'})
     image_names = {p.name for p in images}
-    files = [p for p in targets.iterdir() if p.is_file() and
+    files = [p for p in targets.iterdir() if (p.is_file() or p.is_symlink() or p.name in image_names) and
              (p.name in image_names or p.name in metadata or (sdk_name and p.name == sdk_name))]
     if not files:
         return None
     for source in files:
+        if not source.is_file() or source.is_symlink() or any(
+                p.is_symlink() for p in source.parents if p.is_relative_to(raw)):
+            raise ValueError('Firmware assets must be regular files inside raw')
         if source.name == sdk_name and sha256_file(source) != sdk.get('sha256'):
             raise ValueError('Firmware SDK archive does not match the published profile checksum')
+    if factories:
+        factory = factories[0]
+        ram = factory.with_name(factory.name.removesuffix('initramfs-factory.ubi') + 'initramfs-kernel.bin')
+        if ram not in files or not 0 < factory.stat().st_size <= 30 * 1024**2:
+            raise ValueError('Stock factory UBI requires its RAM FIT and must fit the 30 MiB partition')
+        from stock_factory import verify_native_factory
+        verify_native_factory(ram, factory, package_only=policy, kernel_inputs=None)
+    return build_id, files
+
+
+def stage_firmware(raw, output, profile):
+    planned = firmware_files(raw, profile)
+    if planned is None:
+        return None
+    build_id, files = planned
+    destination = Path(output) / 'firmware' / build_id
     destination.mkdir(parents=True)
     for source in files:
         shutil.copy2(source, destination / source.name)
@@ -224,6 +259,8 @@ def main():
             raise ValueError('Invalid pinned public key') from error
         if public_key_payload(pinned_public) != public_key_payload(derived_public):
             raise ValueError('Signing key differs from pinned public key')
+    # A malformed/missing mandatory factory must not leave a partial signed feed.
+    firmware_files(args.input, profile)
     feed = stage_feed(args.input, args.output, profile)
     public_key = args.output / 'repository.pub'
     usign = str(args.usign.resolve())

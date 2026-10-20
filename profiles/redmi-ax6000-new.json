@@ -84,7 +84,6 @@
     "publication_url": "https://valujin.github.io/ax6000-packages"
   },
   "image_packages": [
-    "tailscale",
     "kmod-amneziawg",
     "amneziawg-tools",
     "luci-proto-amneziawg",
@@ -99,5 +98,8 @@
   ],
   "luci_languages": [
     "ru"
+  ],
+  "package_only": [
+    "tailscale"
   ]
 }
