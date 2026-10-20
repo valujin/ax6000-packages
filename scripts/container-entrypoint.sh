@@ -9,7 +9,7 @@ apt-get install -y --no-install-recommends build-essential clang flex bison gawk
   unzip zlib1g-dev file wget curl zstd xz-utils ca-certificates cmake ninja-build \
   time util-linux libelf-dev libzstd-dev swig device-tree-compiler cpio \
   libpython3-dev python3-dev perl pkgconf bzip2 patch tar gzip sudo
-export AX6000_BUILD_LOCK=/build/.build.lock
+export AX6000_BUILD_LOCK=${AX6000_BUILD_LOCK:-/build/.build.lock}
 builder_uid=$(stat -c %u /workspace)
 builder_user=$(getent passwd "$builder_uid" | cut -d: -f1)
 if [[ -z "$builder_user" ]]; then
