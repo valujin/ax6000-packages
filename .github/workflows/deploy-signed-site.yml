@@ -1,0 +1,115 @@
+name: Deploy a verified signed site
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable firmware Release in valujin/ax6000-packages
+        required: true
+        type: string
+      archive_sha256:
+        description: Reviewed SHA256 of public.tar.zst (64 lowercase hex characters)
+        required: true
+        type: string
+      snapshot_sha256:
+        description: Reviewed SHA256 of signed snapshot-manifest.json
+        required: true
+        type: string
+
+concurrency:
+  group: package-repository
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -e -o pipefail {0}
+
+jobs:
+  verify:
+    if: github.repository == 'valujin/ax6000-packages' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install small verification prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd cmake build-essential libjson-c-dev
+      - name: Download only the reviewed immutable signed site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          SNAPSHOT_SHA256: ${{ inputs.snapshot_sha256 }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^firmware-redmi-ax6000-[0-9a-f]{12}-[0-9a-f]{12}$ ]]
+          [[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$SNAPSHOT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          mkdir release-download
+          gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/valujin/ax6000-packages/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release-before.json"
+          python3 scripts/deploy-signed-site.py --release-tag "$RELEASE_TAG" \
+            --release-metadata "$RUNNER_TEMP/release-before.json" \
+            --expected-archive-sha256 "$ARCHIVE_SHA256" --expected-snapshot-sha256 "$SNAPSHOT_SHA256"
+          gh release download "$RELEASE_TAG" --repo valujin/ax6000-packages --dir release-download \
+            --pattern public.tar.zst --pattern public.tar.zst.sha256
+          gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/valujin/ax6000-packages/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release-after.json"
+          python3 scripts/deploy-signed-site.py --release-tag "$RELEASE_TAG" \
+            --release-metadata "$RUNNER_TEMP/release-after.json" \
+            --previous-release-metadata "$RUNNER_TEMP/release-before.json"
+      - name: Build the pinned official verifier outside the archive
+        run: |
+          pin=f1f65026a94137c91b5466b149ef3ea3f20091e9
+          git init "$RUNNER_TEMP/usign-source"
+          git -C "$RUNNER_TEMP/usign-source" fetch --depth 1 https://github.com/openwrt/usign.git "$pin"
+          git -C "$RUNNER_TEMP/usign-source" checkout --detach FETCH_HEAD
+          [[ $(git -C "$RUNNER_TEMP/usign-source" rev-parse HEAD) == "$pin" ]]
+          bash scripts/resource-limit.sh --jobs 1 -- cmake \
+            -S "$RUNNER_TEMP/usign-source" -B "$RUNNER_TEMP/usign-build"
+          bash scripts/resource-limit.sh --jobs 1 -- cmake \
+            --build "$RUNNER_TEMP/usign-build" --parallel 1
+      - name: Verify all signatures and every file before creating the Pages artifact
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          SNAPSHOT_SHA256: ${{ inputs.snapshot_sha256 }}
+        run: |
+          python3 scripts/deploy-signed-site.py --release-tag "$RELEASE_TAG" \
+            --release-metadata "$RUNNER_TEMP/release-after.json" \
+            --previous-release-metadata "$RUNNER_TEMP/release-before.json" \
+            --archive release-download/public.tar.zst --checksum release-download/public.tar.zst.sha256 \
+            --output public --expected-profile profiles/redmi-ax6000-new.json \
+            --public-key keys/repository.pub --usign "$RUNNER_TEMP/usign-build/usign" \
+            --expected-archive-sha256 "$ARCHIVE_SHA256" --expected-snapshot-sha256 "$SNAPSHOT_SHA256"
+          printf 'Verified existing signed site from %s\nArchive SHA256: %s\nSnapshot SHA256: %s\n' \
+            "$RELEASE_TAG" "$ARCHIVE_SHA256" "$SNAPSHOT_SHA256" >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Upload the complete verified site
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: public
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Atomically deploy the existing verified signed site
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
