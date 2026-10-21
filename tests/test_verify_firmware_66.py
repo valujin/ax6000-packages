@@ -62,7 +62,7 @@ class Stock66Payload(unittest.TestCase):
   dbdata=vendor_country._patched_js(gzip.decompress((ROOT/'tests/fixtures/vendor-country/66-wireless-mtk.js.gz').read_bytes()))
   path=tree/'usr/share/luci-app-mtwifi-cfg/wireless-mtk.js';path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(dbdata);path.chmod(0o644)
   lmo=tree/'usr/lib/lua/luci/i18n/attendedsysupgrade.ru.lmo';lmo.parent.mkdir(parents=True,exist_ok=True);lmo.write_bytes(b'compiled Russian LMO fixture')
-  for name,version in {**feature['versions'],'luci-app-attendedsysupgrade':asu_client.APP_VERSION+'-r'+asu_client.RELEASE,'luci-i18n-attendedsysupgrade-ru':'26.1'}.items():
+  for name,version in {**feature['versions'],'luci-app-attendedsysupgrade':asu_client.APP_VERSION+'-r'+asu_client.release(profile),'luci-i18n-attendedsysupgrade-ru':'26.1'}.items():
    path=self.root/(name+'.ipk');controls[name]=make_ipk(path,name,{'usr/lib/lua/luci/i18n/attendedsysupgrade.ru.lmo':lmo.read_bytes()} if name=='luci-i18n-attendedsysupgrade-ru' else {},version);ipks[name]=path
   (tree/'usr/lib/opkg/status').write_bytes(b'\n'.join((''.join(k+': '+val+'\n' for k,val in c.items())+'Status: install ok installed\n').encode() for c in controls.values()))
   self.assertGreaterEqual(len(inspect('features')['optional_features']['files']),9)
