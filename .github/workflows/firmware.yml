@@ -79,8 +79,10 @@ jobs:
           python3 -m unittest discover -s tests -v
           for script in scripts/*.sh; do bash -n "$script"; done
       - name: Resolve Tailscale and keep reviewed firmware feed pins
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/monitor.py --profile "$PROFILE" --output state/firmware-lock.json
+          python3 scripts/monitor.py --pinned-feeds --profile "$PROFILE" --output state/firmware-lock.json
           python3 - <<'PY'
           import json
           import os

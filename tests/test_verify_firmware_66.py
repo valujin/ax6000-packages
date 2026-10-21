@@ -52,6 +52,24 @@ class Stock66Payload(unittest.TestCase):
    image=self.root/(label+'.squashfs');subprocess.run([str(maker),str(tree),str(image),'-noappend','-comp','xz','-processors','1','-b','262144'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
    return v.inspect_root(image,'stock',reader,profile,controls,ipks,{},'key',b'CONFIG_SMP=y\nCONFIG_MODULE_UNLOAD=y\n',{n:c['Version'] for n,c in controls.items()})
   self.assertEqual(len(inspect('valid')['modules']),4)
+  # Exercise optional feature verification against actual SquashFS bytes.
+  import image_features,asu_client,vendor_country
+  profile['asu']={'enabled':True,'cohort':'66','server_url':'https://asu.ezon.by/66','seed':'a'*64}
+  profile['vendor_country_db']=True
+  feature=image_features.expected(profile,{})
+  for name,(data,mode) in feature['files'].items():
+   path=tree/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data);path.chmod(mode)
+  dbdata=vendor_country._patched_js(gzip.decompress((ROOT/'tests/fixtures/vendor-country/66-wireless-mtk.js.gz').read_bytes()))
+  path=tree/'usr/share/luci-app-mtwifi-cfg/wireless-mtk.js';path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(dbdata);path.chmod(0o644)
+  lmo=tree/'www/luci-static/resources/i18n/attendedsysupgrade.ru.lmo';lmo.parent.mkdir(parents=True,exist_ok=True);lmo.write_bytes(b'compiled Russian LMO fixture')
+  for name,version in {**feature['versions'],'luci-app-attendedsysupgrade':asu_client.APP_VERSION+'-r'+asu_client.RELEASE,'luci-i18n-attendedsysupgrade-ru':'26.1'}.items():
+   path=self.root/(name+'.ipk');controls[name]=make_ipk(path,name,{'www/luci-static/resources/i18n/attendedsysupgrade.ru.lmo':lmo.read_bytes()} if name=='luci-i18n-attendedsysupgrade-ru' else {},version);ipks[name]=path
+  (tree/'usr/lib/opkg/status').write_bytes(b'\n'.join((''.join(k+': '+val+'\n' for k,val in c.items())+'Status: install ok installed\n').encode() for c in controls.values()))
+  self.assertGreaterEqual(len(inspect('features')['optional_features']['files']),9)
+  metadata=tree/'etc/asu-cohort.json';original=metadata.read_bytes();metadata.write_bytes(original.replace(b'"cohort": "66"',b'"cohort": "612-latest"'))
+  self.assertRaisesRegex(ValueError,'feature bytes',inspect,'wrong-cohort');metadata.write_bytes(original)
+  wireless=tree/'usr/share/luci-app-mtwifi-cfg/wireless-mtk.js';wireless.write_bytes(dbdata+b'// modified')
+  self.assertRaisesRegex(ValueError,'DB country',inspect,'wrong-db');wireless.write_bytes(dbdata)
   tail=tree/'usr/sbin/tailscaled';tail.parent.mkdir(parents=True);tail.write_bytes(b'leftover executable');self.assertRaisesRegex(ValueError,'package.only|Package.only|tailscale',inspect,'tail');tail.unlink()
   (tree/'lib/modules/6.6.133/kmod-mt_wifi.ko').unlink();self.assertRaises(ValueError,inspect,'missing-vendor')
  def test_wrong_supported_device_and_revision_rejected(self):

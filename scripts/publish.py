@@ -11,8 +11,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 from urllib.parse import urlsplit
+
+# Entry points are also loaded directly by verification tooling.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def sha256_file(path):
@@ -133,17 +137,23 @@ def firmware_files(raw, profile):
         raise ValueError('Invalid firmware package_only policy')
     factory_required = 'tailscale' in policy
     if not (Path(raw) / 'bin').is_dir():
+        if profile.get('asu', {}).get('enabled') is True:
+            raise ValueError('ASU firmware target directory is required')
         if factory_required:
             raise ValueError('Stock factory UBI is required for package_only Tailscale')
         return None
     targets = Path(raw) / 'bin' / 'targets' / profile['firmware']['target'] / profile['firmware']['subtarget']
     if not targets.is_dir():
+        if profile.get('asu', {}).get('enabled') is True:
+            raise ValueError('ASU firmware target directory is required')
         if factory_required:
             raise ValueError('Stock factory UBI is required for package_only Tailscale')
         return None
     if targets.is_symlink() or not targets.resolve().is_relative_to(raw.resolve()) or any(
             p.is_symlink() for p in targets.parents if p.is_relative_to(raw)):
         raise ValueError('Firmware target directory is outside raw or a symlink')
+    from imagebuilder import validate_artifact
+    builder = validate_artifact(targets, profile, required=False)
     build_id = firmware_build_id(profile)
     sdk = profile.get('sdk', {})
     sdk_name = Path(urlsplit(sdk.get('url', '')).path).name
@@ -165,6 +175,8 @@ def firmware_files(raw, profile):
         prefix = image.name.split('-' + device + '-', 1)[0]
         metadata.update({prefix + '.manifest', prefix + '-' + device + '.manifest'})
     image_names = {p.name for p in images}
+    if builder and (targets / builder['filename']).exists():
+        image_names.add(builder['filename'])
     files = [p for p in targets.iterdir() if (p.is_file() or p.is_symlink() or p.name in image_names) and
              (p.name in image_names or p.name in metadata or (sdk_name and p.name == sdk_name))]
     if not files:
@@ -198,6 +210,81 @@ def stage_firmware(raw, output, profile):
     for filename in ('sha256sums', 'SHA256SUMS'):
         (destination / filename).write_text(checksums)
     return destination
+
+
+
+def imagebuilder_download_catalog(output, profile):
+    """Daily publication can reference the immutable native IB without copying it.
+
+    Native import separately requires its physical archive. All references are
+    pinned to the same immutable generation, and signed alongside the feed.
+    """
+    if profile.get('asu', {}).get('enabled') is not True:
+        return None
+    from imagebuilder import validate_artifact
+    directory = Path(output) / 'firmware' / firmware_build_id(profile)
+    builder = validate_artifact(directory, profile, required=False)
+    base = 'https://github.com/valujin/ax6000-packages/releases/download/firmware-' + profile['build_id'] + '/'
+    assets = []
+    for path in sorted(directory.iterdir()):
+        if not path.is_file() or path.is_symlink():
+            raise ValueError('ASU download assets must be regular files')
+        assets.append({'filename': path.name, 'size': path.stat().st_size, 'sha256': sha256_file(path),
+                       'url': base + path.name})
+    # Native staging retains both checksum spellings for existing consumers.
+    # GitHub Release asset names are case-insensitive: authenticate the alias
+    # bytes, then expose only the canonical uppercase name in the signed catalog.
+    checksums = {x['filename']: x for x in assets if x['filename'] in ('SHA256SUMS', 'sha256sums')}
+    if len(checksums) == 2:
+        upper, lower = checksums['SHA256SUMS'], checksums['sha256sums']
+        if upper['size'] != lower['size'] or upper['sha256'] != lower['sha256']:
+            raise ValueError('checksum aliases differ')
+        with (directory / 'SHA256SUMS').open('rb') as canonical, (directory / 'sha256sums').open('rb') as alias:
+            while chunk := canonical.read(1024 * 1024):
+                if chunk != alias.read(len(chunk)):
+                    raise ValueError('checksum aliases differ')
+            if alias.read(1):
+                raise ValueError('checksum aliases differ')
+        assets = [x for x in assets if x['filename'] != 'sha256sums']
+    if not any(x['filename'] == builder['filename'] for x in assets):
+        assets.append(builder)
+    names = [asset['filename'].casefold() for asset in assets]
+    if len(names) != len(set(names)):
+        raise ValueError('ASU download asset names collide ignoring case')
+    return {'schema_version': 1, 'channel': '66', 'profile_id': profile['id'], 'build_id': profile['build_id'],
+            'firmware': profile['firmware'], 'sdk': profile['sdk'], 'imagebuilder': profile['imagebuilder'], 'assets': assets}
+
+
+def sign_snapshot_manifest(output, profile, key, public_key, usign):
+    """Authenticate the complete ASU-enabled 6.6 publication for immutable mirroring."""
+    if profile.get('asu', {}).get('enabled') is not True:
+        return None
+    output = Path(output)
+    message, signature = output / 'snapshot-manifest.json', output / 'snapshot-manifest.sig'
+    if message.exists() or message.is_symlink() or signature.exists() or signature.is_symlink():
+        raise ValueError('Signed snapshot manifest already exists')
+    files = []
+    for path in sorted(output.rglob('*')):
+        if path.is_symlink():
+            raise ValueError('Snapshot inventory contains a symlink')
+        if path.is_dir():
+            continue
+        if not path.is_file() or not path.resolve().is_relative_to(output.resolve()):
+            raise ValueError('Snapshot inventory contains a non-regular file')
+        files.append({'path': path.relative_to(output).as_posix(), 'size': path.stat().st_size,
+                      'sha256': sha256_file(path)})
+    if not files or len(files) > 100000:
+        raise ValueError('Invalid snapshot inventory size')
+    result = {'schema_version': 1, 'cohort': '66', 'profile_id': profile['id'],
+              'build_id': profile['build_id'], 'kernel_version': profile['firmware']['kernel_version'],
+              'files': files}
+    with message.open('x') as stream:
+        stream.write(json.dumps(result, indent=2, sort_keys=True) + '\n')
+    subprocess.run([str(usign), '-S', '-m', str(message), '-s', str(Path(key).resolve()),
+                    '-x', str(signature)], check=True)
+    subprocess.run([str(usign), '-V', '-m', str(message), '-p', str(Path(public_key).resolve()),
+                    '-x', str(signature)], check=True)
+    return result
 
 
 def public_from_secret(key):
@@ -274,6 +361,14 @@ def main():
                         '-p', str(args.public_key.resolve()),
                         '-x', str(feed / 'Packages.sig')], check=True)
     firmware_dir = stage_firmware(args.input, args.output, profile)
+    catalog = imagebuilder_download_catalog(args.output, profile)
+    if catalog is not None:
+        catalog_path = args.output / 'downloads.json'
+        catalog_path.write_text(json.dumps(catalog, indent=2, sort_keys=True) + '\n')
+        subprocess.run([usign, '-S', '-m', str(catalog_path), '-s', str(args.key.resolve()),
+                        '-x', str(args.output / 'downloads.sig')], check=True)
+        subprocess.run([usign, '-V', '-m', str(catalog_path), '-p', str(public_key),
+                        '-x', str(args.output / 'downloads.sig')], check=True)
     state = args.output / 'state'
     state.mkdir()
     shutil.copy2(args.lock, state / 'lock.json')
@@ -298,6 +393,7 @@ def main():
         (f'<p>Kernel ABI: <code>{html.escape(profile["firmware"]["kernel_version"])}</code></p>'
          '<p>Firmware and SDK for Redmi AX6000 stock layout. Install the matching firmware '
          'before using these kernel modules.</p>' + downloads if firmware_dir else ''))
+    sign_snapshot_manifest(args.output, profile, args.key, public_key, usign)
     print(f'Validated and signed feed: {feed}')
 
 

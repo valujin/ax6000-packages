@@ -2,6 +2,8 @@
 """Validate exact-firmware SDK inputs and prepare package-only selections."""
 import argparse
 import hashlib
+import importlib.util
+from functools import lru_cache
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -17,6 +19,30 @@ COMMIT = re.compile(r"[0-9a-fA-F]{40}\Z")
 SHA256 = re.compile(r"[0-9a-fA-F]{64}\Z")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_+.-]*\Z")
 KERNEL_PACKAGE = re.compile(r"([0-9]+\.[0-9]+\.[0-9]+)~([0-9a-f]{32})-r([0-9]+)\Z")
+
+
+@lru_cache(maxsize=3)
+def optional_package_module(name):
+    # prepare.py is also imported by filename from publication tools/tests.
+    # Resolve the sibling explicitly instead of relying on global sys.path.
+    if name not in ('pbr_sources', 'vendor_country', 'asu_client'):
+        raise ValueError('Unsupported optional package module')
+    spec = importlib.util.spec_from_file_location('_ax6000_' + name, Path(__file__).with_name(name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def pbr_source_module():
+    return optional_package_module('pbr_sources')
+
+
+def validate_package_hooks(profile):
+    if 'vendor_country_db' in profile:
+        require(type(profile['vendor_country_db']) is bool, 'vendor_country_db must be boolean')
+    if profile.get('asu') is not None:
+        return optional_package_module('asu_client').policy(profile)
+    return None
 
 
 def require(condition, message):
@@ -109,6 +135,9 @@ def validate(profile, lock):
             re.fullmatch(r"[a-z]{2,3}(?:_[A-Za-z]{2,8})?", language) for language in languages)
             and len(set(languages)) == len(languages), "luci_languages must be a unique list of LuCI language codes")
     require(isinstance(lock, dict), "lock must be an object")
+    validate_package_hooks(profile)
+    if 'pbr_source' in profile or 'pbr' in lock:
+        pbr_source_module().validate(profile, lock)
     feed_pins(profile, lock)
     overrides = package_overrides(lock)
     for name, override in overrides.items():
@@ -203,6 +232,13 @@ $(eval $(call BuildPackage,tailscale))
 
 def apply_overrides(lock, sdk, profile):
     """Copy a pinned recipe, never rewrite the feed or global Go compiler."""
+    asu_policy = validate_package_hooks(profile)
+    if 'pbr_source' in profile or 'pbr' in lock:
+        pbr_source_module().apply(profile, lock, sdk)
+    if profile.get('vendor_country_db') is True:
+        optional_package_module('vendor_country').apply_vendor_country_patch(sdk)
+    if asu_policy is not None:
+        optional_package_module('asu_client').apply(profile, sdk)
     for name, override in package_overrides(lock).items():
         # Full source trees have feeds/base -> package and package/feeds aliases.
         # Count actual files once, while still rejecting two distinct recipes.

@@ -58,7 +58,7 @@ class FirmwareExportIntegration(unittest.TestCase):
     def test_exported_profile_lock_and_sdk_url_describe_actual_build(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+            profile = json.loads((ROOT / 'tests/fixtures/legacy66-source-profile.json').read_text())
             profile['packages'] = ['kmod-wireguard', 'kmod-amneziawg', 'fw-helper-live']
             profile['image_packages'] = []
             profile['package_only'] = []

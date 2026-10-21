@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "id": "redmi-ax6000",
+  "enabled": true,
+  "firmware": {
+    "repository": "https://github.com/padavanonly/immortalwrt-mt798x-6.6.git",
+    "commit": "ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8",
+    "device": "xiaomi_redmi-router-ax6000-stock",
+    "kernel_version": null,
+    "target": "mediatek",
+    "subtarget": "filogic",
+    "architecture": "aarch64_cortex-a53"
+  },
+  "sdk": {
+    "url": null,
+    "sha256": null
+  },
+  "feeds": [
+    {
+      "name": "packages",
+      "url": "https://github.com/immortalwrt/packages.git",
+      "commit": "110d325c507051d78dac56d95d1c98a724eb0753",
+      "monitor_ref": "refs/heads/openwrt-24.10"
+    },
+    {
+      "name": "luci",
+      "url": "https://github.com/immortalwrt/luci.git",
+      "commit": "80ed8a44f244627c5a9f808d09f4c3d8f985b764",
+      "monitor_ref": "refs/heads/openwrt-24.10"
+    },
+    {
+      "name": "routing",
+      "url": "https://github.com/openwrt/routing.git",
+      "commit": "00619bc7bc60d8b67ecc490121e45298b122cd6e",
+      "monitor_ref": "refs/heads/openwrt-24.10"
+    },
+    {
+      "name": "telephony",
+      "url": "https://github.com/openwrt/telephony.git",
+      "commit": "92892fa285360b8981f62bf4e0a097e6449e7e33",
+      "monitor_ref": "refs/heads/openwrt-24.10"
+    },
+    {
+      "name": "amneziawg",
+      "url": "https://github.com/2Grey/awg-openwrt.git",
+      "commit": "3f3ec68d594c8e965c988af75ac5314616229c88",
+      "monitor_ref": "refs/heads/master"
+    }
+  ],
+  "packages": [
+    "tailscale",
+    "kmod-amneziawg",
+    "amneziawg-tools",
+    "luci-proto-amneziawg",
+    "kmod-wireguard",
+    "wireguard-tools",
+    "luci-proto-wireguard",
+    "pbr",
+    "luci-app-pbr",
+    "mwan3",
+    "luci-app-mwan3",
+    "banip",
+    "luci-app-banip",
+    "openvpn-openssl",
+    "luci-app-openvpn",
+    "xl2tpd",
+    "ppp-mod-pptp",
+    "kmod-tun",
+    "ip-full",
+    "resolveip",
+    "luci",
+    "luci-ssl",
+    "luci-i18n-base-ru",
+    "luci-i18n-pbr-ru",
+    "luci-i18n-mwan3-ru",
+    "strongswan",
+    "strongswan-default",
+    "strongswan-swanctl"
+  ],
+  "all_kmods": true,
+  "build_source": {
+    "defconfig": "defconfig/mt7986-ax6000.config",
+    "device": "xiaomi_redmi-router-ax6000-stock",
+    "publication_url": "https://valujin.github.io/ax6000-packages"
+  },
+  "image_packages": [
+    "kmod-amneziawg",
+    "amneziawg-tools",
+    "luci-proto-amneziawg",
+    "wireguard-tools",
+    "luci-proto-wireguard",
+    "pbr",
+    "luci-app-pbr",
+    "luci",
+    "luci-ssl",
+    "luci-i18n-base-ru",
+    "luci-i18n-pbr-ru"
+  ],
+  "luci_languages": [
+    "ru"
+  ],
+  "package_only": [
+    "tailscale"
+  ]
+}

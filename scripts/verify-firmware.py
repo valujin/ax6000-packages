@@ -29,6 +29,7 @@ import zlib
 
 from fit_payload import MIB, cell, extract_fit, read_fdt, require, stringlist, text
 import stock_factory
+import image_features
 
 PIN = 'ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8'
 DEVICES = {'stock': 'xiaomi_redmi-router-ax6000-stock'}
@@ -276,7 +277,12 @@ def file_mode(listing, path):
 
 
 def require_mode(listing, path, mode):
-    expected = {0o755: '-rwxr-xr-x', 0o644: '-rw-r--r--'}[mode]
+    if mode is None:
+        actual = file_mode(listing, path)
+        require(len(actual) == 10 and actual.startswith('-') and actual[5] != 'w' and actual[8] != 'w',
+                'SquashFS feature file must be regular without group/other write: ' + path)
+        return
+    expected = {0o755: '-rwxr-xr-x', 0o644: '-rw-r--r--', 0o600: '-rw-------'}[mode]
     require(file_mode(listing, path) == expected, f'SquashFS {path} must be regular with mode {mode:04o}')
 
 
@@ -369,7 +375,7 @@ def ipk_contents(path, *, payload=False):
                         require(control is None and member.isfile() and member.size <= MIB,
                                 'Invalid IPK control member')
                         control = control_fields(archive.extractfile(member).read(MIB + 1))
-                    elif name == 'data.tar.gz' and (relative.endswith('.ko') or relative.startswith('lib/firmware/')):
+                    elif name == 'data.tar.gz' and (relative.endswith('.ko') or relative.startswith('lib/firmware/') or relative.endswith('.lmo')):
                         # Firmware aliases are not executed/extracted. Concrete firmware
                         # files and all .ko files must match the actual image bytes.
                         if member.issym() and not relative.endswith('.ko'):
@@ -417,7 +423,7 @@ def module_info(data, version, kernel_config):
 
 
 def inspect_root(root, layout, binary, profile, controls, ipks, expected_files,
-                 fingerprint, kernel_config, manifest_packages):
+                 fingerprint, kernel_config, manifest_packages, feature_lock=None, feature_source=None):
     regular(root, 0x7a80000)
     with root.open('rb') as stream:
         superblock = stream.read(96)
@@ -517,12 +523,20 @@ def inspect_root(root, layout, binary, profile, controls, ipks, expected_files,
                 firmware[path] = {'package': package, 'size': len(value), 'sha256': hashlib.sha256(value).hexdigest()}
         if package in VENDOR:
             require(found_modules > 0, 'Native vendor package has no inspected module: ' + package)
+    native_translations = {}
+    for package in sorted(n for n in status if n.startswith('luci-i18n-pbr-') or n == 'luci-i18n-attendedsysupgrade-ru'):
+        native_control, payload = ipk_contents(ipks[package], payload=True)
+        require(native_control == controls[package], 'Native translation package changed during image inspection')
+        native_translations.update({path: data for path, data in payload.items() if path.endswith('.lmo')})
+    feature_record = image_features.verify(profile, feature_lock or {}, status,
+        lambda path, cap: squash_read(binary, root, path, cap),
+        lambda path, mode: require_mode(squash_read(binary, root, path, listing=True), path, mode), source=feature_source, native_translations=native_translations)
     return {'sha256': sha256(root), 'size': root.stat().st_size, 'squashfs_bytes_used': used,
             'installed_kernel': status['kernel'], 'installed_packages': sorted(status),
             'vendor_packages': sorted(VENDOR), 'vendor_userland_packages': sorted(VENDOR_USERLAND),
             'modules': modules, 'firmware': firmware, 'trusted_key_fingerprint': fingerprint,
             'repository_files': overlay, 'active_feeds': 0, 'apk_executable_present': False,
-            'package_only_absent': package_only}
+            'package_only_absent': package_only, 'optional_features': feature_record}
 
 
 class PipeReader:
@@ -772,7 +786,7 @@ def main(args):
     require((firmware.get('target'), firmware.get('subtarget'), firmware.get('architecture')) ==
             ('mediatek', 'filogic', 'aarch64_cortex-a53'), 'Profile target/architecture differs')
     approved = read_json(repo / 'profiles/redmi-ax6000-new.json')
-    for field in ('id', 'channel', 'packages', 'image_packages', 'package_only', 'luci_languages', 'publication', 'build_source'):
+    for field in ('id', 'channel', 'packages', 'image_packages', 'package_only', 'luci_languages', 'publication', 'build_source', 'asu', 'pbr_source', 'vendor_country_db', 'package_manager'):
         require(profile.get(field) == approved.get(field), 'Exported profile differs from reviewed recipe: ' + field)
     package_only = stock_factory.package_policy(profile)
     require({k: v for k, v in firmware.items() if k != 'kernel_version'} ==
@@ -808,6 +822,10 @@ def main(args):
     devices = set(re.findall(rb'^CONFIG_TARGET_DEVICE_([^=\n]+)=y$', config, re.M))
     require(devices == {('mediatek_filogic_DEVICE_' + d).encode() for d in DEVICES.values()}, 'Actual build selected other/missing devices')
     expected_files, fingerprint = repository_expected(repo, profile)
+    feature_expected = image_features.expected(profile, lock, source=source)
+    for name in ('etc/asu-cohort.json', 'etc/uci-defaults/99-ax6000-asu'):
+        if name in feature_expected['files']:
+            expected_files[name] = feature_expected['files'][name]
     for path, (data, mode) in expected_files.items():
         overlay = safe_path(source, 'files/' + path)
         require(regular(overlay, 16 * 1024).read_bytes() == data and overlay.stat().st_mode & 0o7777 == mode,
@@ -930,7 +948,7 @@ def main(args):
         dt_record = verify_dtb(fit['fdt']['path'], layout)
         package_manifest = resolve_device_manifest(target, layout, profile, image, source / 'bin/targets/mediatek/filogic')
         root_record = inspect_root(root, layout, tools['unsquashfs4'], profile, controls, ipks,
-                                   expected_files, fingerprint, kernel_config, device_manifest(package_manifest))
+                                   expected_files, fingerprint, kernel_config, device_manifest(package_manifest), feature_lock=lock, feature_source=source)
         root_record['package_manifest'] = {'filename': package_manifest.name, 'sha256': sha256(package_manifest)}
         fit_record = {k: {key: value for key, value in v.items() if key != 'path'} for k, v in fit.items()}
         records[layout] = {'image': image.name, 'image_sha256': before, 'image_size': image.stat().st_size,
@@ -969,7 +987,9 @@ def main(args):
                 stock_factory_proof = stock_factory.verify_native_factory(ram_image, path,
                     package_only=package_only,
                     expected_packages={name: controls[name] for name in records['stock']['root']['installed_packages']},
-                    expected_dtb_sha256=records['stock']['device_tree']['sha256'], kernel_inputs=kernel_inputs)
+                    expected_dtb_sha256=records['stock']['device_tree']['sha256'], kernel_inputs=kernel_inputs,
+                    expected_files=expected_files, expected_hashes={name: item['sha256'] for name, item in
+                        records['stock']['root']['optional_features']['files'].items()})
                 optional_sizes[path.name]['payload_verified'] = True
     if 'tailscale' in package_only:
         require(stock_factory_proof is not None, 'Native stock factory UBI is mandatory for package_only Tailscale')

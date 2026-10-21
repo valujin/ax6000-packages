@@ -8,9 +8,13 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from urllib.parse import urlsplit
+
+# Entry points are also loaded directly by verification tooling.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 SPEC = importlib.util.spec_from_file_location('release_prepare', Path(__file__).with_name('prepare.py'))
 prepare = importlib.util.module_from_spec(SPEC)
@@ -90,6 +94,8 @@ def validate_inventory(raw, profile, manifest):
         raise ValueError('Firmware inventory must contain exactly one matching profile SDK archive')
     if inventory[sdk.relative_to(raw).as_posix()]['sha256'] != profile['sdk']['sha256']:
         raise ValueError('Firmware SDK archive checksum differs from the generated profile')
+    from imagebuilder import validate_artifact
+    validate_artifact(target, profile, required=True)
     images = list(target.glob('*-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin'))
     if len(images) != 1 or images[0].relative_to(raw).as_posix() not in inventory:
         raise ValueError('Firmware inventory must contain exactly one recorded stock sysupgrade image')

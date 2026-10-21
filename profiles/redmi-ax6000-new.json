@@ -75,7 +75,10 @@
     "luci-i18n-mwan3-ru",
     "strongswan",
     "strongswan-default",
-    "strongswan-swanctl"
+    "strongswan-swanctl",
+    "attendedsysupgrade-common",
+    "luci-app-attendedsysupgrade",
+    "luci-i18n-attendedsysupgrade-ru"
   ],
   "all_kmods": true,
   "build_source": {
@@ -94,12 +97,27 @@
     "luci",
     "luci-ssl",
     "luci-i18n-base-ru",
-    "luci-i18n-pbr-ru"
+    "luci-i18n-pbr-ru",
+    "attendedsysupgrade-common",
+    "luci-app-attendedsysupgrade",
+    "luci-i18n-attendedsysupgrade-ru"
   ],
   "luci_languages": [
     "ru"
   ],
   "package_only": [
     "tailscale"
-  ]
+  ],
+  "pbr_source": "mossdef-stable",
+  "vendor_country_db": true,
+  "publication": {
+    "repository": "valujin/ax6000-packages",
+    "firmware_assets": "github-release"
+  },
+  "asu": {
+    "enabled": true,
+    "cohort": "66",
+    "server_url": "https://asu.ezon.by/66",
+    "seed": "0302167c6ba6c6749ffe3bbdd60413153b863cd4eb13aafb5bb518c81c2e4c93"
+  }
 }

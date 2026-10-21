@@ -4,6 +4,7 @@ import argparse
 import base64
 import copy
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -18,6 +19,117 @@ import tempfile
 
 import prepare
 from publish import read_control
+
+
+def sibling_module(name):
+    """Load opt-in helpers from this recipe, even with importlib-based callers."""
+    prepare.require(name in {"asu_client", "imagebuilder", "monitor"}, "unsupported native helper")
+    path = Path(__file__).resolve().with_name(name + ".py")
+    spec = importlib.util.spec_from_file_location("ax6000_native_" + name, path)
+    prepare.require(spec is not None and spec.loader is not None, "native helper unavailable: " + name)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def asu_policy(profile):
+    if "asu" not in profile:
+        return None
+    helper = sibling_module("asu_client")
+    policy = helper.policy(profile)
+    expected = "612-" + profile["channel"] if profile.get("channel") else "66"
+    prepare.require(policy["cohort"] == expected, "ASU cohort differs from source firmware channel")
+    required = set(helper.REQUIRED_PACKAGES)
+    prepare.require(required <= set(profile.get("packages", []))
+                    and required <= set(profile.get("image_packages", [])),
+                    "ASU client packages must be requested and installed in the image")
+    return policy
+
+
+def asu_symbols(profile):
+    policy = asu_policy(profile)
+    if policy is None:
+        return {}
+    values = {"IB": "y", "IB_STANDALONE": "y", "SIGNATURE_CHECK": "y"}
+    # 6.6 BUILDBOT overrides standalone and silently drops most native packages.
+    if policy["cohort"] == "66":
+        values["BUILDBOT"] = "n"
+        values.update({"PACKAGE_opkg": "y", "USE_APK": "n"})
+        values.update({"PACKAGE_" + name: "n" for name in ("apk", "apk-mbedtls", "apk-openssl")})
+    return values
+
+
+def verify_asu(profile, source):
+    if asu_policy(profile) is None:
+        return
+    config = (source / ".config").read_text()
+    for symbol, value in asu_symbols(profile).items():
+        active = re.findall(r"^CONFIG_" + re.escape(symbol) + r"=(.+)$", config, re.M)
+        prepare.require(active == [value] if value != "n" else not active,
+                        f"ASU configuration requires {symbol}={value}")
+    sibling_module("asu_client").configure(profile, source, check_only=True)
+
+
+def native_seed(profile):
+    """Pre-build seed: source profile, recipe fingerprint and fixed contract; no SDK cycle.
+
+    Canonical UTF-8 JSON uses sorted keys and compact separators. Only asu.seed
+    is omitted. This is called on source profiles while SDK and kernel ABI are
+    null; monitor.recipe_digest binds scripts, workflows and ASU assets. The
+    generated profile later binds the seed to actual SDK/IB identities.
+    """
+    inputs = copy.deepcopy(profile)
+    inputs["asu"].pop("seed", None)
+    payload = {"recipe_contract": "ax6000-native-asu-v1", "source_profile": inputs,
+               "recipe_sha256": sibling_module("monitor").recipe_digest()}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                     ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
+def firmware_bank_assets(archive):
+    """The SDK carries images, never the separately exported native ImageBuilder."""
+    return [asset for asset in sorted(archive.parent.iterdir())
+            if asset.is_file() and asset != archive and not asset.name.endswith(".partial")
+            and asset.name not in {"sha256sums", "SHA256SUMS"}
+            and "imagebuilder" not in asset.name.lower()]
+
+
+def firmware_asset_url(profile, filename):
+    publication = profile.get("publication", {})
+    prepare.require(publication.get("repository") == "valujin/ax6000-packages"
+                    and publication.get("firmware_assets") == "github-release",
+                    "ASU firmware requires the approved immutable Release repository")
+    build_id = profile.get("build_id", "")
+    prepare.require(isinstance(build_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{1,180}", build_id),
+                    "invalid ASU firmware build ID")
+    prepare.require(Path(filename).name == filename and filename not in {"", ".", ".."}, "invalid firmware asset name")
+    return f"https://github.com/valujin/ax6000-packages/releases/download/firmware-{build_id}/{filename}"
+
+
+def export_imagebuilder(generated, source, helper=None):
+    if asu_policy(generated) is None:
+        return
+    target = source / "bin/targets/mediatek/filogic"
+    archives = sorted(path for path in target.iterdir()
+                      if "imagebuilder" in path.name.lower() and ".tar" in path.name.lower())
+    prepare.require(len(archives) == 1, "native ASU build must produce exactly one ImageBuilder archive")
+    archive = archives[0]
+    prepare.require(archive.is_file() and not archive.is_symlink()
+                    and archive.resolve().is_relative_to(source.resolve())
+                    and not any(parent.is_symlink() for parent in archive.parents
+                                if parent != source and parent.is_relative_to(source)),
+                    "native ImageBuilder archive must be a regular source file")
+    prepare.require(re.fullmatch(r"immortalwrt-imagebuilder(?:-[A-Za-z0-9_.+-]+)?-mediatek-filogic\.Linux-x86_64\.tar\.(?:xz|gz|zst)", archive.name),
+                    "unrecognized native ImageBuilder archive filename")
+    url = firmware_asset_url(generated, archive.name)
+    helper = helper or sibling_module("imagebuilder")
+    result = helper.export_archive(generated, source, archive,
+                                   public_key=Path(__file__).resolve().parents[1] / "keys/repository.pub",
+                                   signing_key=source / "key-build", native_public_key=source / "key-build.pub",
+                                   usign=source / "staging_dir/host/bin/usign", normalizer=normalize_local_sdk)
+    generated["imagebuilder"] = {"url": url,
+                                 "sha256": result["sha256"], "size": result["size"]}
+    helper.validate_artifact(target, generated)
 
 
 def validate(profile, lock):
@@ -47,6 +159,9 @@ def validate(profile, lock):
     prepare.require(isinstance(image, list) and all(name in profile["packages"] for name in image),
                     "image_packages must be a subset of requested packages")
     ssl_symbols(profile)
+    policy = asu_policy(profile)
+    if policy is not None and profile.get("sdk", {}).get("url") is None:
+        prepare.require(policy["seed"] == native_seed(profile), "ASU source profile seed differs from its reviewed recipe inputs")
     return profile
 
 
@@ -69,7 +184,11 @@ def configure(profile, lock, source):
                "CONFIG_ALL_KMODS=y\nCONFIG_DEVEL=y\nCONFIG_SDK=y\n"
                "# CONFIG_ALL is not set\n# CONFIG_ALL_NONSHARED is not set\n"
                "CONFIG_SIGNED_PACKAGES=y\nCONFIG_SIGNATURE_CHECK=y\n")
-    (source / ".config").write_text(set_symbols(config, ssl_symbols(profile)))
+    values = ssl_symbols(profile)
+    values.update(asu_symbols(profile))
+    (source / ".config").write_text(set_symbols(config, values))
+    if asu_policy(profile) is not None:
+        sibling_module("asu_client").configure(profile, source)
 
 
 def repository_files(source, check_only=False):
@@ -410,6 +529,7 @@ def select(profile, source):
     for name in sorted(requested | set(kmods)):
         values["PACKAGE_" + name] = "y" if name in baseline_y or name in profile.get("image_packages", []) else "m"
     values.update(ssl_symbols(profile))
+    values.update(asu_symbols(profile))
     values.update({"PACKAGE_" + name: "m" for name in prepare.package_only_packages(profile)})
     config_path.write_text(set_symbols(config, values))
     report = {"profile": profile["id"], "requested": sorted(requested), "candidate_kmods": kmods,
@@ -431,6 +551,7 @@ def verify(profile, source):
     config = (source / ".config").read_text()
     verify_ssl(profile, config)
     verify_package_only(profile, source)
+    verify_asu(profile, source)
     enabled = set(re.findall(r"^CONFIG_TARGET_DEVICE_(.+)=y$", config, re.M))
     prepare.require(enabled == {"mediatek_filogic_DEVICE_xiaomi_redmi-router-ax6000-stock"},
                     "firmware selection includes another device or omits AX6000 stock")
@@ -654,10 +775,8 @@ def augment_sdk(profile, source, archive, controls, abi):
         # itself is added from the verified download later, avoiding archive recursion.
         firmware_assets = snapshot / "firmware"
         firmware_assets.mkdir()
-        for asset in sorted(archive.parent.iterdir()):
-            if asset.is_file() and asset != archive and not asset.name.endswith(".partial") \
-                    and asset.name not in {"sha256sums", "SHA256SUMS"}:
-                shutil.copy2(asset, firmware_assets / asset.name)
+        for asset in firmware_bank_assets(archive):
+            shutil.copy2(asset, firmware_assets / asset.name)
         # Validate the augmented context without changing its original configuration/hash.
         sdk_profile = copy.deepcopy(profile)
         sdk_profile["firmware"]["kernel_version"] = abi
@@ -719,7 +838,9 @@ def export(profile, lock, source, output):
     site_url = profile["build_source"].get("publication_url", "https://valujin.github.io/ax6000-packages")
     url_base = site_url.rstrip("/") + "/firmware/" + build_id
     prepare.https_url(url_base, "firmware publication URL")
-    generated["sdk"] = {"url": url_base.rstrip("/") + "/" + sdks[0].name, "sha256": sdk_hash}
+    generated["sdk"] = {"url": firmware_asset_url(generated, sdks[0].name) if asu_policy(generated) is not None
+                        else url_base.rstrip("/") + "/" + sdks[0].name, "sha256": sdk_hash}
+    export_imagebuilder(generated, source)
     output.mkdir(parents=True)
     shutil.copytree(source / "bin", output / "bin", symlinks=True)
     exported_target = output / "bin/targets/mediatek/filogic"

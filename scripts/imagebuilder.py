@@ -1,0 +1,384 @@
+"""Matching native ImageBuilder export. No target binaries are executed here.
+
+The exported bank is immutable and complete (including core packages). Updating
+ASU packages means adding a separately authenticated immutable feed, never
+reindexing or silently replacing this native bank.
+"""
+import argparse
+import copy
+import gzip
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
+import posixpath
+import re
+import shutil
+import subprocess
+import tarfile
+import tempfile
+
+from publish import read_control
+
+FORMAT = 1
+REPOSITORIES = 'src imagebuilder file:packages\noption check_signature\n'
+FROZEN_MARKER = '# AX6000 immutable native package bank; never regenerate its signed index.\n'
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def enabled(profile):
+    asu = profile.get('asu', {})
+    require(isinstance(asu, dict), 'asu must be an object')
+    return asu.get('enabled') is True
+
+
+def sha256(path):
+    with Path(path).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def record(path, root):
+    require(path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(Path(root).resolve()),
+            'ImageBuilder evidence must be a regular file inside its root: ' + str(path))
+    return {'path': path.relative_to(root).as_posix(), 'size': path.stat().st_size, 'sha256': sha256(path)}
+
+
+def safe_extract(archive, destination):
+    """Accept standard internal symlinks/hardlinks, reject escapes and alias writes."""
+    archive, destination = Path(archive), Path(destination)
+    require(not destination.exists(), 'ImageBuilder destination already exists')
+    with tempfile.TemporaryDirectory(prefix='imagebuilder-unpack-', dir=destination.parent) as tmp:
+        unpacked = archive
+        if archive.name.endswith('.zst'):
+            unpacked = Path(tmp) / 'archive.tar'
+            with unpacked.open('wb') as stream:
+                subprocess.run(['zstd', '-d', '-c', '--', str(archive)], stdout=stream, check=True)
+        with tarfile.open(unpacked, 'r:*') as tar:
+            members = tar.getmembers()
+            require(0 < len(members) <= 200000, 'invalid ImageBuilder archive member count')
+            require(sum(m.size for m in members if m.isfile()) <= 16 * 1024**3,
+                    'ImageBuilder archive expands beyond limit')
+            paths, roots = {}, set()
+            for member in members:
+                path = PurePosixPath(member.name)
+                require(path.parts and str(path) == member.name.rstrip('/') and not path.is_absolute()
+                        and '..' not in path.parts, 'unsafe ImageBuilder archive path: ' + member.name)
+                require(str(path) not in paths, 'duplicate ImageBuilder archive path: ' + member.name)
+                require(member.isfile() or member.isdir() or member.issym() or member.islnk(),
+                        'unsupported ImageBuilder member: ' + member.name)
+                paths[str(path)] = member
+                roots.add(path.parts[0])
+            require(len(roots) == 1, 'ImageBuilder archive requires one root')
+            for name, member in paths.items():
+                path = PurePosixPath(name)
+                for parent in path.parents:
+                    require(str(parent) not in paths or paths[str(parent)].isdir(),
+                            'ImageBuilder archive writes through non-directory: ' + name)
+                if member.issym() or member.islnk():
+                    require(not member.linkname.startswith('/'), 'absolute ImageBuilder archive link: ' + name)
+                    linked = posixpath.join(str(path.parent), member.linkname) if member.issym() else member.linkname
+                    linked = PurePosixPath(posixpath.normpath(linked))
+                    require(linked.parts and linked.parts[0] == path.parts[0] and '..' not in linked.parts,
+                            'ImageBuilder archive link escapes root: ' + name)
+                    if member.islnk():
+                        require(str(linked) in paths and paths[str(linked)].isfile(),
+                                'ImageBuilder hardlink must name a regular archive member')
+            require(hasattr(tarfile, 'data_filter'), 'tarfile data_filter support is required')
+            destination.mkdir(parents=True)
+            tar.extractall(destination, members=members, filter='data')
+    root = destination / next(iter(roots))
+    require((root / 'Makefile').is_file() and not (root / 'Makefile').is_symlink(), 'ImageBuilder Makefile missing')
+    return root
+
+
+def freeze_makefile(text):
+    require(FROZEN_MARKER not in text, 'ImageBuilder Makefile already rewritten')
+    require(text.count('\npackage_index: FORCE\n') == 1 and text.count('\npackage_reload:\n') == 1
+            and text.count('\npackage_list: FORCE\n') == 1, 'unrecognized native ImageBuilder package lifecycle')
+    start, end = text.index('\npackage_index: FORCE\n'), text.index('\npackage_list: FORCE\n')
+    frozen = ('\n' + FROZEN_MARKER + 'package_index: FORCE\n'
+              '\t@echo "Refusing to regenerate immutable native package bank" >&2\n\t@false\n\n'
+              'package_reload:\n\tmkdir -p $(TARGET_DIR)/tmp\n\t$(OPKG) update >&2\n')
+    return text[:start] + frozen + text[end:]
+
+
+def native_context(source, abi):
+    source = Path(source)
+    version = abi.split('~', 1)[0]
+    kernels = [p.parent.parent.parent for p in (source / 'build_dir').glob('target-*/linux-*/linux-*/include/config/kernel.release')
+               if p.read_text().strip() == version]
+    require(len(kernels) == 1, 'cannot identify exactly one native prepared ImageBuilder kernel')
+    kernel = kernels[0]
+    require((kernel / '.config').is_file(), 'native kernel .config missing')
+    paths = [kernel / '.config', kernel.parent / 'Image', source / 'tmp/.targetinfo', source / 'tmp/.packageinfo']
+    paths += sorted(p for p in (kernel / 'arch/arm64/boot/dts').rglob('*.dtb') if p.is_file())
+    paths += sorted(p for p in kernel.parent.glob('*.dtb') if p.is_file())
+    for images in sorted((source / 'staging_dir').glob('target-*/image')):
+        paths += sorted(p for p in images.rglob('*') if p.is_file())
+    require(any(p.suffix == '.dtb' for p in paths), 'native ImageBuilder DTBs missing')
+    return [record(p, source) for p in paths]
+
+
+def package_bank(packages, profile):
+    packages = list(packages)
+    require(packages, 'empty native ImageBuilder package bank')
+    result, names, filenames = [], set(), set()
+    abi = profile['firmware']['kernel_version']
+    arch = profile['firmware']['architecture']
+    for path in sorted(packages):
+        require(path.is_file() and not path.is_symlink() and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+~-]*\.ipk', path.name),
+                'unsafe native package filename')
+        control = read_control(path)
+        name = control.get('Package', '')
+        require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+-]*', name) and control.get('Version'), 'invalid ImageBuilder package control')
+        require(name not in names and path.name not in filenames, 'duplicate native package identity')
+        require(control.get('Architecture') in (arch, 'all', 'noarch'), 'foreign ImageBuilder package architecture')
+        if name == 'kernel':
+            require(control['Version'] == abi, 'foreign ImageBuilder kernel ABI')
+        if name.startswith('kmod-'):
+            depends = re.findall(r'(?:^|,)\s*kernel\s*\(\s*=\s*([^\s)]+)\s*\)', control.get('Depends', ''))
+            require(depends == [abi], 'foreign ImageBuilder kmod ABI: ' + name)
+        names.add(name)
+        filenames.add(path.name)
+        result.append({'filename': path.name, 'package': name, 'version': control['Version'],
+                       'architecture': control['Architecture'], 'size': path.stat().st_size, 'sha256': sha256(path),
+                       'control': control})
+    require({'kernel', 'libc', 'base-files', 'busybox', 'opkg'} <= names, 'ImageBuilder native core package bank incomplete')
+    require(set(profile['packages']) <= names, 'ImageBuilder requested package bank incomplete')
+    return result
+
+
+def package_index(bank):
+    paragraphs = []
+    for item in bank:
+        # Preserve all control fields including dependency/Provides/ABI metadata.
+        fields = {k: v for k, v in item['control'].items() if k not in ('Filename', 'Size', 'SHA256sum')}
+        fields.update({'Filename': item['filename'], 'Size': str(item['size']), 'SHA256sum': item['sha256']})
+        paragraphs.append('\n'.join(k + ': ' + v for k, v in fields.items()))
+    return ('\n\n'.join(paragraphs) + '\n\n').encode()
+
+
+def _sign(usign, key, public_key, index):
+    subprocess.run([str(usign), '-S', '-m', str(index), '-s', str(key), '-x', str(index) + '.sig'], check=True)
+    subprocess.run([str(usign), '-V', '-m', str(index), '-p', str(public_key), '-x', str(index) + '.sig'], check=True)
+
+
+def _identity(profile):
+    return {'build_id': profile['build_id'], 'source_commit': profile['firmware']['commit'],
+            'kernel_version': profile['firmware']['kernel_version'], 'architecture': profile['firmware']['architecture'],
+            'target': profile['firmware']['target'] + '/' + profile['firmware']['subtarget']}
+
+
+def verify_tree(tree, profile, public_key, usign, source=None, native_packages=None):
+    tree = Path(tree)
+    metadata = json.loads((tree / 'ax6000-imagebuilder.json').read_text())
+    require(metadata.get('schema_version') == FORMAT and metadata.get('identity') == _identity(profile),
+            'ImageBuilder generation/source/kernel identity mismatch')
+    require((tree / 'repositories.conf').read_text() == REPOSITORIES, 'ImageBuilder enables moving or foreign repositories')
+    require(not (tree / 'repositories').exists(), 'APK ImageBuilder is unsupported')
+    config = (tree / '.config').read_text()
+    require('CONFIG_USE_APK=y' not in config and 'CONFIG_IB_STANDALONE=y' in config,
+            'ImageBuilder must be standalone OPKG')
+    for symbol, value in [('TARGET_BOARD', profile['firmware']['target']), ('TARGET_SUBTARGET', profile['firmware']['subtarget']),
+                          ('TARGET_ARCH_PACKAGES', profile['firmware']['architecture'])]:
+        require(f'CONFIG_{symbol}="{value}"' in config, 'ImageBuilder target configuration mismatch: ' + symbol)
+    revision = re.findall(r'^REVISION\s*:?=\s*r\d+(?:\+\d+)?-([0-9a-f]{7,40})\s*$', (tree / 'include/version.mk').read_text(), re.M)
+    require(len(revision) == 1 and profile['firmware']['commit'].startswith(revision[0]), 'ImageBuilder baked source revision mismatch')
+    require(FROZEN_MARKER in (tree / 'Makefile').read_text(), 'ImageBuilder mutable package lifecycle')
+    if source is not None:
+        require((tree / 'Makefile').read_text() == freeze_makefile((Path(source) / 'target/imagebuilder/files/Makefile').read_text()),
+                'ImageBuilder Makefile differs from approved native transformation')
+    keys = list((tree / 'keys').iterdir())
+    require(isinstance(metadata.get('native_key_fingerprint'), str)
+            and re.fullmatch(r'[a-f0-9]{16}', metadata['native_key_fingerprint']), 'invalid native key fingerprint metadata')
+    native_key = tree / 'keys' / metadata['native_key_fingerprint']
+    require(len(keys) == 2 and all(p.is_file() and not p.is_symlink() for p in keys)
+            and any(p.read_bytes() == Path(public_key).read_bytes() for p in keys),
+            'ImageBuilder trusted repository public key differs')
+    require(metadata['public_key_sha256'] == sha256(public_key)
+            and sha256(native_key) == metadata['native_public_key_sha256'], 'ImageBuilder public key metadata differs')
+    fingerprint = subprocess.check_output([str(usign), '-F', '-p', str(native_key)], text=True).strip()
+    require(fingerprint == metadata['native_key_fingerprint'], 'ImageBuilder native public key fingerprint differs')
+    bank = package_bank((tree / 'packages').glob('*.ipk'), profile)
+    require(bank == metadata['packages'], 'ImageBuilder native package bank/index identity differs')
+    index = tree / 'packages/Packages'
+    require(index.read_bytes() == package_index(bank), 'ImageBuilder package index metadata differs')
+    require(gzip.decompress((tree / 'packages/Packages.gz').read_bytes()) == index.read_bytes(), 'ImageBuilder compressed index differs')
+    subprocess.run([str(usign), '-V', '-m', str(index), '-p', str(native_key), '-x', str(index) + '.sig'], check=True)
+    if source is not None:
+        require(native_key.read_bytes() == (Path(source) / 'key-build.pub').read_bytes(), 'ImageBuilder native signing key differs from source')
+    if native_packages is not None:
+        require(bank == package_bank(native_packages, profile), 'ImageBuilder bank differs from actual native IPKs')
+    contexts = metadata['context']
+    require(isinstance(contexts, list) and contexts and len({x['path'] for x in contexts}) == len(contexts), 'invalid ImageBuilder context inventory')
+    for item in contexts:
+        path = PurePosixPath(item['path'])
+        require(not path.is_absolute() and '..' not in path.parts and str(path) == item['path'], 'unsafe ImageBuilder context path')
+        require(record(tree / path, tree) == item, 'ImageBuilder native context bytes differ: ' + str(path))
+        if item['path'].startswith('tmp/'):
+            require((tree / path.name).is_file() and not (tree / path.name).is_symlink()
+                    and sha256(tree / path.name) == item['sha256'], 'ImageBuilder active target/package metadata differs')
+    if source is not None:
+        require(contexts == native_context(source, profile['firmware']['kernel_version']), 'ImageBuilder differs from actual native kernel/DTB/vendor context')
+    return {'schema_version': FORMAT, 'identity': metadata['identity'], 'packages': len(bank),
+            'kmods': sum(x['package'].startswith('kmod-') for x in bank), 'context_files': len(contexts),
+            'public_key_sha256': metadata['public_key_sha256'], 'native_make_executed': False}
+
+
+def export_archive(profile, source, archive, public_key, signing_key, usign, normalizer=None, native_public_key=None):
+    """Rewrite a locally produced standalone IB, then verify before atomic replace.
+
+    normalizer may be prepare-firmware.normalize_local_sdk, to translate only its
+    reviewed host-tool absolute symlinks; externally downloaded archives never
+    receive that local-source exception.
+    """
+    require(enabled(profile), 'ImageBuilder export requires explicit ASU opt-in')
+    source, archive = Path(source), Path(archive)
+    native_public_key = Path(native_public_key) if native_public_key else source / 'key-build.pub'
+    require(Path(signing_key).is_file() and native_public_key.is_file(), 'native ImageBuilder signing key pair missing')
+    require(native_public_key.read_bytes() != Path(public_key).read_bytes(), 'native and repository signing keys must be separate')
+    require(archive.is_file() and not archive.is_symlink(), 'matching ImageBuilder archive missing')
+    before_sha256 = sha256(archive)
+    with tempfile.TemporaryDirectory(prefix='ax6000-imagebuilder-', dir=source.parent) as tmp:
+        tmp = Path(tmp)
+        unpacked = archive
+        if archive.name.endswith('.zst'):
+            unpacked = tmp / 'native.tar'
+            with unpacked.open('wb') as stream:
+                subprocess.run(['zstd', '-d', '-c', '--', str(archive)], stdout=stream, check=True)
+        if normalizer:
+            normalized = tmp / 'normalized.tar'
+            normalizer(unpacked, normalized, source)
+            unpacked = normalized
+        tree = safe_extract(unpacked, tmp / 'extracted')
+        secret = Path(signing_key).read_bytes()
+        require(secret and len(secret) <= 16384, 'invalid native signing key size')
+        for path in tree.rglob('*'):
+            if path.is_file() and not path.is_symlink():
+                require(path.name != 'key-build' and not path.name.endswith('-private-key.pem'), 'private key path in ImageBuilder')
+                if path.stat().st_size <= 16384:
+                    require(path.read_bytes() != secret, 'native private key leaked into ImageBuilder')
+        paths = list((source / 'bin').rglob('*.ipk'))
+        bank = package_bank(paths, profile)
+        # Native standalone completeness is checked before replacing the bank.
+        require(package_bank((tree / 'packages').glob('*.ipk'), profile) == bank,
+                'native standalone ImageBuilder omitted or changed packages')
+        (tree / 'repositories.conf').write_text(REPOSITORIES)
+        require(not (tree / 'repositories').exists(), 'APK ImageBuilder is unsupported')
+        keys = tree / 'keys'
+        if keys.exists():
+            require(keys.is_dir() and not keys.is_symlink(), 'unsafe ImageBuilder keys directory')
+            shutil.rmtree(keys)
+        keys.mkdir()
+        fingerprint = subprocess.check_output([str(usign), '-F', '-p', str(public_key)], text=True).strip()
+        require(re.fullmatch(r'[a-f0-9]{16}', fingerprint), 'invalid public signing key fingerprint')
+        shutil.copy2(public_key, keys / fingerprint)
+        native_fingerprint = subprocess.check_output([str(usign), '-F', '-p', str(native_public_key)], text=True).strip()
+        require(re.fullmatch(r'[a-f0-9]{16}', native_fingerprint) and native_fingerprint != fingerprint, 'invalid native public key fingerprint')
+        shutil.copy2(native_public_key, keys / native_fingerprint)
+        (tree / 'Makefile').write_text(freeze_makefile((tree / 'Makefile').read_text()))
+        index = tree / 'packages/Packages'
+        index.write_bytes(package_index(bank))
+        (tree / 'packages/Packages.gz').write_bytes(gzip.compress(index.read_bytes(), mtime=0))
+        _sign(usign, signing_key, native_public_key, index)
+        metadata = {'schema_version': FORMAT, 'identity': _identity(profile), 'public_key_sha256': sha256(public_key),
+                    'native_public_key_sha256': sha256(native_public_key), 'native_key_fingerprint': native_fingerprint,
+                    'packages': bank, 'context': native_context(source, profile['firmware']['kernel_version'])}
+        # .targetinfo/.packageinfo are relocated by the native IB Makefile.
+        for item in metadata['context']:
+            if item['path'].startswith('tmp/'):
+                native = tree / PurePosixPath(item['path']).name
+                require(record(native, tree)['sha256'] == item['sha256'], 'ImageBuilder native metadata differs')
+                (tree / 'tmp').mkdir(exist_ok=True)
+                shutil.copy2(native, tree / item['path'])
+        (tree / 'ax6000-imagebuilder.json').write_text(json.dumps(metadata, indent=2, sort_keys=True) + '\n')
+        result = verify_tree(tree, profile, public_key, usign, source, paths)
+        partial = archive.with_name(archive.name + '.partial')
+        try:
+            if archive.name.endswith('.zst'):
+                with partial.open('wb') as out:
+                    process = subprocess.Popen(['zstd', '-T1', '-10', '-c'], stdin=subprocess.PIPE, stdout=out)
+                    try:
+                        with tarfile.open(fileobj=process.stdin, mode='w|') as tar:
+                            tar.add(tree, arcname=tree.name)
+                    finally:
+                        process.stdin.close()
+                    require(process.wait() == 0, 'failed to compress exported ImageBuilder')
+            else:
+                mode = 'w:xz' if archive.name.endswith('.xz') else 'w:gz' if archive.name.endswith('.gz') else 'w'
+                with tarfile.open(partial, mode) as tar:
+                    tar.add(tree, arcname=tree.name)
+            partial.replace(archive)
+        finally:
+            if partial.exists():
+                partial.unlink()
+    return {**result, 'filename': archive.name, 'sha256': sha256(archive), 'size': archive.stat().st_size,
+            'native_archive_sha256': before_sha256, 'transformations': ['portable-local-host-links', 'immutable-signed-native-bank', 'fixed-local-repositories', 'native-and-production-public-keys', 'context-attestation']}
+
+
+def validate_artifact(target, profile, required=True):
+    """Authenticate the one native archive against the generated profile.
+
+    Reference-only consumers may explicitly use required=False after restoring
+    an authenticated native generation; importing a native RAW always requires
+    its physical archive. The URL must remain that immutable generation.
+    """
+    target = Path(target)
+    archives = sorted(p for p in target.iterdir() if 'imagebuilder' in p.name and '.tar' in p.name)
+    if not enabled(profile):
+        require(not archives and 'imagebuilder' not in profile, 'ImageBuilder requires explicit ASU opt-in')
+        return None
+    identity = profile.get('imagebuilder')
+    require(isinstance(identity, dict) and set(identity) == {'url', 'sha256', 'size'}, 'ASU generation ImageBuilder identity missing')
+    require(isinstance(identity['url'], str), 'invalid ImageBuilder URL')
+    name = PurePosixPath(urlsplit(identity['url']).path).name
+    require(re.fullmatch(r'immortalwrt-imagebuilder(?:-[A-Za-z0-9_.+-]+)?-mediatek-filogic\.Linux-x86_64\.tar\.(?:xz|gz|zst)', name),
+            'unrecognized ImageBuilder archive filename')
+    repository = 'valujin/ax6000-packages-6.12' if profile.get('channel') else 'valujin/ax6000-packages'
+    build_id = profile.get('build_id')
+    require(isinstance(build_id, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{1,180}', build_id), 'invalid ImageBuilder build ID')
+    require(identity['url'] == f'https://github.com/{repository}/releases/download/firmware-{build_id}/{name}',
+            'ImageBuilder URL must name its immutable generation Release')
+    require(isinstance(identity['sha256'], str) and re.fullmatch(r'[a-f0-9]{64}', identity['sha256'])
+            and type(identity['size']) is int and 0 < identity['size'] < 2 * 1024**3, 'invalid ImageBuilder hash/size')
+    require(len(archives) <= 1 and (not archives or archives[0].name == name), 'unknown or extra ImageBuilder archive')
+    if not archives:
+        require(not required, 'matching ImageBuilder archive missing')
+        return {'filename': name, **identity}
+    archive = archives[0]
+    require(archive.is_file() and not archive.is_symlink() and archive.stat().st_size == identity['size']
+            and sha256(archive) == identity['sha256'], 'ImageBuilder archive checksum/size differs from profile')
+    return {'filename': name, **identity}
+
+
+def verify_archive(archive, profile, public_key, usign, work, source=None, native_packages=None):
+    archive = Path(archive)
+    require(archive.is_file() and not archive.is_symlink(), 'ImageBuilder archive argument must be a regular file')
+    if 'imagebuilder' in profile:
+        selected = validate_artifact(archive.parent, profile)
+        require(archive.name == selected['filename'] and archive.stat().st_size == selected['size']
+                and sha256(archive) == selected['sha256'], 'ImageBuilder archive argument differs from pinned artifact')
+    tree = safe_extract(archive, work)
+    result = verify_tree(tree, profile, public_key, usign, source, native_packages)
+    return {**result, 'filename': Path(archive).name, 'sha256': sha256(archive), 'size': Path(archive).stat().st_size}
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--archive', type=Path, required=True)
+    parser.add_argument('--profile', type=Path, required=True)
+    parser.add_argument('--public-key', type=Path, required=True)
+    parser.add_argument('--usign', type=Path, required=True)
+    parser.add_argument('--work', type=Path, required=True)
+    parser.add_argument('--source', type=Path)
+    args = parser.parse_args()
+    try:
+        print(json.dumps(verify_archive(args.archive, json.loads(args.profile.read_text()), args.public_key,
+                                        args.usign, args.work, args.source), indent=2))
+    except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
+        parser.exit(1, 'imagebuilder: ' + str(error) + '\n')

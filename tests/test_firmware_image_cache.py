@@ -22,7 +22,7 @@ class ImageCacheReset(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.source = self.root / 'source'
         self.source.mkdir()
-        self.profile = json.loads((ROOT / 'profiles/redmi-ax6000-new.json').read_text())
+        self.profile = json.loads((ROOT / 'tests/fixtures/legacy66-source-profile.json').read_text())
         self.receipt = self.root / 'cleanup.json'
         name = 'immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-initramfs-factory.ubi'
         build = Path('build_dir/target-aarch64_cortex-a53_musl')
@@ -51,7 +51,7 @@ class ImageCacheReset(unittest.TestCase):
         self.assertEqual(self.receipt.read_bytes(), first)
 
     def test_real_cli_phase_accepts_external_receipt_and_removes_only_stock_cache(self):
-        profile_file = ROOT / 'profiles/redmi-ax6000-new.json'
+        profile_file = ROOT / 'tests/fixtures/legacy66-source-profile.json'
         lock_file = self.root / 'lock.json'
         lock_file.write_text(json.dumps({
             'schema_version': 1,
