@@ -2,20 +2,21 @@
 
 Прошивка для **Xiaomi Redmi Router AX6000, stock layout** на базе
 [PadavanOnly ImmortalWrt 24.10 / Linux 6.6](https://github.com/padavanonly/immortalwrt-mt798x-6.6).
+Vendor Wi-Fi: `mt_wifi 7.6.6.1`; формат пакетов — **OPKG/IPK, база 24.10**.
 Прошивка, SDK и модули выпускаются одним набором; ежедневные обновления
 используют SDK этого набора. Установка прошивки выполняется владельцем вручную.
 
 ## Скачать
 
-[Новый Release: прошивка, SDK и доказательства проверок](https://github.com/valujin/ax6000-packages/releases/tag/firmware-redmi-ax6000-ec9ef10efc65-31f4781ff516) ·
+[Новый Release: прошивка, SDK и ImageBuilder](https://github.com/valujin/ax6000-packages/releases/tag/firmware-redmi-ax6000-ec9ef10efc65-940de134c620) ·
 [Подписанный репозиторий пакетов](https://valujin.github.io/ax6000-packages/).
 
 | Файл stock layout | Назначение |
 | --- | --- |
-| [initramfs-factory.ubi](https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-31f4781ff516/immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-initramfs-factory.ubi) | Нативный factory/recovery UBI, **19 791 872 байта**, меньше лимита 30 MiB |
-| [squashfs-sysupgrade.bin](https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-31f4781ff516/immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin) | Обновление уже установленной совместимой OpenWrt/ImmortalWrt |
-| [initramfs-kernel.bin](https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-31f4781ff516/immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-initramfs-kernel.bin) | FIT для загрузки в RAM по подходящей процедуре восстановления |
-| [SHA256SUMS](https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-31f4781ff516/SHA256SUMS) | Контрольные суммы файлов этого набора |
+| [initramfs-factory.ubi](https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-940de134c620/immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-initramfs-factory.ubi) | Нативный factory/recovery UBI, **20 316 160 байт**, меньше лимита 30 MiB |
+| [squashfs-sysupgrade.bin](https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-940de134c620/immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-squashfs-sysupgrade.bin) | Обновление уже установленной совместимой OpenWrt/ImmortalWrt |
+| [initramfs-kernel.bin](https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-940de134c620/immortalwrt-mediatek-filogic-xiaomi_redmi-router-ax6000-stock-initramfs-kernel.bin) | FIT для загрузки в RAM по подходящей процедуре восстановления |
+| [SHA256SUMS](https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-940de134c620/SHA256SUMS) | Контрольные суммы файлов этого набора |
 
 Эти форматы имеют разное назначение. Наличие factory UBI не разрешает
 записывать произвольный FIT в раздел kernel. Перед установкой сверить
@@ -35,19 +36,25 @@ Tailscale 1.104.2-r2 требует около **69,2 MiB** для распак�
 ## Точный набор и проверки
 
 Исходники: `ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8`.
-Build ID: `redmi-ax6000-ec9ef10efc65-31f4781ff516`.
+Build ID: `redmi-ax6000-ec9ef10efc65-940de134c620`.
 
 ```text
 kernel ABI: 6.6.133~6ea4b96ad26e951cc0b4fa9296a521d3-r1
-SDK SHA256: 31f4781ff5168025ac387ae58dea716352190cb7d035dc97e8ab1a911aa8273d
+SDK SHA256: 940de134c620a168e5cb71be59cdbaef32e4fb5e9a1946ec6af10445b8067624
 ```
 
-Нативная сборка содержит **1370 IPK**, включая **1029 пакетов kmod**.
-Банк содержит применимые модули target; исключения указаны в
-`build-selection.json`. Альтернативные драйверы могут конфликтовать при установке.
-Проверки нативных образов подтверждают отсутствие Tailscale и корректную
-структуру stock FIT/UBI. Результат отдельной сборки из нового SDK:
-1367 IPK, все 26 запрошенных пакетов; AmneziaWG пересобран, 1028 штатных kmod сохранены побайтно ([отчёт](https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-31f4781ff516/sdk_after.json)). Для первичной публикации проверены подпись индекса и все файлы: все 1365 IPK, 1387 файлов Pages и 28 файлов Release совпали с проверенным набором.
+Нативный банк содержит **1385 IPK**, включая **1029 пакетов kmod**.
+В дополнительном feed опубликованы **1380 IPK**: `kernel`, `libc`, `base-files`,
+`busybox` и `opkg` исключены, чтобы их установка не подменяла основу прошивки.
+Банк содержит применимые модули target; исключения указаны в `build-selection.json`.
+
+Новая сборка SDK экспортировала 1382 пакета; ядро и все 1029 kmods совпали
+с нативным банком побайтно, включая заново собранный AmneziaWG. При публикации
+защищённые зависимости сохранены из нативной сборки. Проверены три подписи,
+все файлы подписанного снимка и скачивание всех 1380 пакетов настоящим opkg
+на базе пакетов нативного образа. Отдельный ImageBuilder успешно выполнил
+`make info`, `make manifest` и `make image`; проверены ядро, rootfs и все
+408 установленных пакетов. Tailscale в стандартном образе отсутствует.
 
 Проверки артефактов не подтверждают загрузку, Ethernet, Wi-Fi или VPN на
 физическом роутере. Конфигурация выбранного vendor-стека сохранена;
@@ -75,19 +82,28 @@ ax6000-install-feed
 
 ## Обновления
 
-Ежедневный монитор отслеживает feeds, AmneziaWG и стабильный Tailscale.
-При изменении входов или рецепта запрошенные пакеты и AmneziaWG собираются
-из точного SDK; штатные модули сохраняются из нативного банка. Неизменившийся
-набор пропускается. Обновление ядра и прошивки выполняется отдельно.
+Ежедневно в 03:17 UTC монитор проверяет feeds, официальный stable Tailscale,
+согласованную стабильную пару PBR/LuCI автора MOSSDeF и feed-рецепт AmneziaWG
+из `2Grey/awg-openwrt`. Версия AWG зависит от обновления этого рецепта;
+прямого отслеживания всех релизов Amnezia нет. При изменениях пакеты
+собираются из точного SDK, штатные модули сохраняются из нативного банка.
+Неизменившийся набор пропускается; ошибочная сборка не заменяет публикацию.
 
-[Автоматическая сборка и публикация нового SDK](https://github.com/valujin/ax6000-packages/actions/runs/39522430725)
-обновила Tailscale до **1.104.2-r2**. Повторная проверка скачиванием подтвердила
-все 1365 IPK, 1385 файлов Pages и 28 файлов Release; 1028 штатных kmod,
-образы, SDK и контрольные суммы сохранены побайтно.
+Обновление feed не продвигает каталог **Attended Sysupgrade** автоматически.
+ASU использует отдельно проверенный и закреплённый снимок; новое поколение
+и его каталог активирует оператор. В ASU все kmods, включая AmneziaWG,
+сохраняются из нативного банка: для нового AWG сейчас требуется новое
+проверенное нативное поколение, но версия ядра может остаться прежней.
+Tailscale отсутствует в обычных образах; ASU сохраняет его только если он
+уже установлен на запрашивающем роутере. Аппаратные испытания выполняются отдельно.
+
+Страна Wi-Fi `DB` доступна в LuCI и выбирается вручную для каждого радио.
+Она записывает буквальное `country=DB` в выбранную секцию. Добавление пункта
+не меняет страну по умолчанию, не форсирует мощность и не отключает DFS.
 
 Активный профиль — `profiles/redmi-ax6000.json`; source-профиль полной сборки —
 `profiles/redmi-ax6000-new.json`. Старый профиль 6.6.95 выключен.
-[Предыдущий неизменяемый Release](https://github.com/valujin/ax6000-packages/releases/tag/firmware-redmi-ax6000-ec9ef10efc65-0b03a5907043)
+[Предыдущий неизменяемый Release](https://github.com/valujin/ax6000-packages/releases/tag/firmware-redmi-ax6000-ec9ef10efc65-31f4781ff516)
 сохранён для истории; его образы и SDK не заменяются файлами нового набора.
 
 [CI и подпись](docs/CI.md) · [Локальная сборка](docs/BUILD.md) ·

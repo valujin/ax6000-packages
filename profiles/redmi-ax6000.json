@@ -1,6 +1,12 @@
 {
   "all_kmods": false,
-  "build_id": "redmi-ax6000-ec9ef10efc65-31f4781ff516",
+  "asu": {
+    "cohort": "66",
+    "enabled": true,
+    "seed": "1d6ac5d2af24f5baa7ddb6064f65fdefcecca7940cabe8885386904e875b8198",
+    "server_url": "https://asu.ezon.by/66"
+  },
+  "build_id": "redmi-ax6000-ec9ef10efc65-940de134c620",
   "build_source": {
     "defconfig": "defconfig/mt7986-ax6000.config",
     "device": "xiaomi_redmi-router-ax6000-stock",
@@ -65,8 +71,16 @@
     "luci",
     "luci-ssl",
     "luci-i18n-base-ru",
-    "luci-i18n-pbr-ru"
+    "luci-i18n-pbr-ru",
+    "attendedsysupgrade-common",
+    "luci-app-attendedsysupgrade",
+    "luci-i18n-attendedsysupgrade-ru"
   ],
+  "imagebuilder": {
+    "sha256": "4aac44bb59f64362f818e28937f6c61235d92c5888a9f696586d5352b1f53410",
+    "size": 912980971,
+    "url": "https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-940de134c620/immortalwrt-imagebuilder-mediatek-filogic.Linux-x86_64.tar.zst"
+  },
   "luci_languages": [
     "ru"
   ],
@@ -101,11 +115,20 @@
     "luci-i18n-mwan3-ru",
     "strongswan",
     "strongswan-default",
-    "strongswan-swanctl"
+    "strongswan-swanctl",
+    "attendedsysupgrade-common",
+    "luci-app-attendedsysupgrade",
+    "luci-i18n-attendedsysupgrade-ru"
   ],
+  "pbr_source": "mossdef-stable",
+  "publication": {
+    "firmware_assets": "github-release",
+    "repository": "valujin/ax6000-packages"
+  },
   "schema_version": 1,
   "sdk": {
-    "sha256": "31f4781ff5168025ac387ae58dea716352190cb7d035dc97e8ab1a911aa8273d",
-    "url": "https://valujin.github.io/ax6000-packages/firmware/redmi-ax6000-ec9ef10efc65-31f4781ff516/immortalwrt-sdk-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
-  }
+    "sha256": "940de134c620a168e5cb71be59cdbaef32e4fb5e9a1946ec6af10445b8067624",
+    "url": "https://github.com/valujin/ax6000-packages/releases/download/firmware-redmi-ax6000-ec9ef10efc65-940de134c620/immortalwrt-sdk-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+  },
+  "vendor_country_db": true
 }
