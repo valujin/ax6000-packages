@@ -27,7 +27,7 @@ class ImageFeatureTests(unittest.TestCase):
                        'seed': 'a' * 64, 'server_url': asu_client.URLS[cohort]}}
             expected = features.expected(profile, {})
             files = {path: value[0] for path, value in expected['files'].items()}
-            files['www/luci-static/resources/i18n/attendedsysupgrade.ru.lmo'] = b'compiled LMO fixture' * 2
+            files['usr/lib/lua/luci/i18n/attendedsysupgrade.ru.lmo'] = b'compiled LMO fixture' * 2
             installed = {name: {'Version': version} for name, version in expected['versions'].items()}
             installed['luci-app-attendedsysupgrade'] = {'Version': asu_client.APP_VERSION + '-r' + asu_client.release(profile)}
             installed['luci-i18n-attendedsysupgrade-ru'] = {'Version': '26.123'}
@@ -44,6 +44,54 @@ class ImageFeatureTests(unittest.TestCase):
             installed['attendedsysupgrade-common']['Version'] = 'old'
             with self.assertRaisesRegex(ValueError, 'package version'):
                 verify()
+
+    def test_actual_pinned_luci_install_paths_and_native_compiled_translation_payloads(self):
+        import re
+        import subprocess
+        pins = {'66': 'bc1a97fb6c3b4fef065227c6d1530ee580f0af3966d36a967fbca2da1c7000ac',
+                '612': '9716c9a7a1c276b867df5887558e2b63b78f7d3695915adb7fcd0a7f0182ed0d'}
+        locations = set()
+        for series, digest in pins.items():
+            data = (ROOT / 'tests/fixtures/asu-client' / series / 'luci.mk').read_bytes()
+            self.assertEqual(hashlib.sha256(data).hexdigest(), digest)
+            text = data.decode()
+            assignments = [next(line for line in text.splitlines() if line.startswith(name + ' ='))
+                           for name in ('LUA_LIBRARYDIR', 'LUCI_LIBRARYDIR')]
+            self.assertIn('$$(INSTALL_DIR) $$(1)$(LUCI_LIBRARYDIR)/i18n', text)
+            makefile = '\n'.join(assignments) + "\nall:\n\t@printf '%s\\n' '$(LUCI_LIBRARYDIR)/i18n'\n"
+            result = subprocess.run(['make', '--no-print-directory', '-f', '-'], input=makefile.encode(),
+                                    capture_output=True, check=True)
+            locations.add(result.stdout.decode().strip().lstrip('/'))
+        self.assertEqual(locations, {'usr/lib/lua/luci/i18n'})
+        fixture = ROOT / 'tests/fixtures/native66-lmo'
+        digests = {'luci-i18n-attendedsysupgrade-ru': '75e8308bffa4224d327f48180d2ac44dd1a206fbcdebfeff01fb6190262399c5',
+                   'luci-i18n-pbr-ru': '6d1a0334be889af27c3a1adcbaf86901e5e8aa552143d06e360620519a3e8726'}
+        payload = {}
+        for package, digest in digests.items():
+            path = next(fixture.glob(package + '_*.ipk'))
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), digest)
+            with tarfile.open(path, 'r:*') as outer:
+                data = outer.extractfile('./data.tar.gz').read() if './data.tar.gz' in outer.getnames() else outer.extractfile('data.tar.gz').read()
+            with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+                lmos = [entry for entry in archive if entry.isfile() and entry.name.endswith('.lmo')]
+                self.assertEqual(len(lmos), 1)
+                name = lmos[0].name.removeprefix('./')
+                self.assertTrue(name.startswith(next(iter(locations)) + '/'))
+                payload[name] = archive.extractfile(lmos[0]).read()
+        profile = {'asu': {'enabled': True, 'cohort': '66', 'seed': 'a' * 64,
+                          'server_url': asu_client.URLS['66']}}
+        expected = features.expected(profile, {})
+        files = {path: value[0] for path, value in expected['files'].items()}
+        files.update(payload)
+        installed = {name: {'Version': version} for name, version in expected['versions'].items()}
+        installed['luci-i18n-attendedsysupgrade-ru'] = {'Version': '26.246.30525~80ed8a4'}
+        verify = lambda: features.verify(profile, {}, installed, lambda path, cap: files[path],
+                                         lambda path, mode: None, native_translations=payload)
+        proof = verify()
+        lmo = 'usr/lib/lua/luci/i18n/attendedsysupgrade.ru.lmo'
+        self.assertEqual(proof['files'][lmo]['sha256'], hashlib.sha256(payload[lmo]).hexdigest())
+        files[lmo] = files[lmo][:-1] + bytes([files[lmo][-1] ^ 1])
+        with self.assertRaisesRegex(ValueError, 'translation differs'): verify()
 
     def test_locked_author_archive_drives_exact_pbr_runtime_and_version_substitution(self):
         selected = ['etc/init.d/pbr', 'etc/config/pbr', 'etc/uci-defaults/90-pbr',
@@ -76,7 +124,7 @@ class ImageFeatureTests(unittest.TestCase):
             self.assertIn(b"version: '1.2.4-r2'", files['lib/pbr/pkg.uc'])
             files['usr/share/luci-app-mtwifi-cfg/wireless-mtk.js'] = vendor_country._patched_js(gzip.decompress(
                 (ROOT / 'tests/fixtures/vendor-country/66-wireless-mtk.js.gz').read_bytes()))
-            files['www/luci-static/resources/i18n/attendedsysupgrade.ru.lmo'] = b'compiled LMO fixture' * 2
+            files['usr/lib/lua/luci/i18n/attendedsysupgrade.ru.lmo'] = b'compiled LMO fixture' * 2
             installed = {name: {'Version': version} for name, version in expected['versions'].items()}
             installed['luci-app-attendedsysupgrade'] = {'Version': asu_client.APP_VERSION + '-r' + asu_client.RELEASE}
             installed['luci-i18n-attendedsysupgrade-ru'] = {'Version': '26.123'}

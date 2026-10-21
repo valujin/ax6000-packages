@@ -96,6 +96,57 @@ def safe_extract(archive, destination):
     return root
 
 
+FROZEN_KEY_POLICY = '''# AX6000 fixed public trust: no ephemeral signing identities.
+ifneq ($(strip $(ADD_LOCAL_KEY)),)
+$(error ADD_LOCAL_KEY is forbidden for immutable AX6000 ImageBuilder)
+endif
+'''
+
+
+FROZEN_KEY_TARGET = '''
+_check_keys: FORCE
+\t@test ! -e "$(BUILD_KEY)" && test ! -e "$(BUILD_KEY).ucert" && test ! -e "$(BUILD_KEY_APK_SEC)" && test ! -e "$(TOPDIR)/private-key.pem" || { echo "Private signing keys or local certificates are forbidden in AX6000 ImageBuilder" >&2; exit 1; }
+ifeq ($(CONFIG_USE_APK),)
+\t"$(STAGING_DIR_HOST)/bin/usign" -V -P "$(OPKG_KEYS)" -m "$(PACKAGE_DIR)/Packages" -x "$(PACKAGE_DIR)/Packages.sig"
+else
+\t"$(STAGING_DIR_HOST)/bin/apk" --no-network --keys-dir "$(APK_KEYS)" verify "$(PACKAGE_DIR)/packages.adb"
+endif
+
+image:
+'''
+
+
+def verify_key_lifecycle(text):
+    require(text.startswith(FROZEN_KEY_POLICY), "ImageBuilder fixed public key policy missing")
+    matches = re.findall(r"\n_check_keys: FORCE\n.*?\nimage:\n", text, re.S)
+    require(matches == [FROZEN_KEY_TARGET] and "$(SCRIPT_DIR)/opkg-key add" not in text
+            and "cp $(BUILD_KEY_APK_PUB)" not in text, "ImageBuilder may generate or inject ephemeral signing keys")
+
+
+def freeze_key_lifecycle(text):
+    """Remove all key/certificate generation and rootfs key injection hooks."""
+    pattern = r'\n_check_keys: FORCE\n.*?\nimage:\n'
+    matches = re.findall(pattern, text, re.S)
+    require(len(matches) == 1 and 'Generate local signing keys' in matches[0]
+            and '$(BUILD_KEY).ucert' in matches[0] and 'ecparam -name prime256v1' in matches[0],
+            'unrecognized native ImageBuilder signing key lifecycle')
+    replacement = FROZEN_KEY_TARGET
+    text = text.replace(matches[0], replacement)
+    pattern = r'(\nprepare_rootfs: FORCE\n.*?\t\$\(CP\) \$\(TARGET_DIR\) \$\(TARGET_DIR_ORIG\)\n).*?(\n\t\$\(call prepare_rootfs,\$\(TARGET_DIR\),\$\(USER_FILES\),\$\(DISABLED_SERVICES\)\))'
+    matches = list(re.finditer(pattern, text, re.S))
+    require(len(matches) == 1 and '$(ADD_LOCAL_KEY)' in matches[0].group(0)
+            and '$(SCRIPT_DIR)/opkg-key add $(BUILD_KEY).pub' in matches[0].group(0)
+            and 'cp $(BUILD_KEY_APK_PUB)' in matches[0].group(0),
+            'unrecognized native ImageBuilder rootfs signing key injection')
+    match = matches[0]
+    text = text[:match.start()] + match.group(1) + match.group(2) + text[match.end():]
+    help_line = '\tmake image ADD_LOCAL_KEY=1 # store locally generated signing key in built images'
+    require(text.count(help_line) == 1, 'unrecognized native ImageBuilder signing key help')
+    text = text.replace(help_line, '\tSigning trust is fixed by the immutable AX6000 generation.')
+    return FROZEN_KEY_POLICY + text
+
+
+
 def freeze_makefile(text):
     require(FROZEN_MARKER not in text, 'ImageBuilder Makefile already rewritten')
     require(text.count('\npackage_index: FORCE\n') == 1 and text.count('\npackage_reload:\n') == 1
@@ -104,7 +155,7 @@ def freeze_makefile(text):
     frozen = ('\n' + FROZEN_MARKER + 'package_index: FORCE\n'
               '\t@echo "Refusing to regenerate immutable native package bank" >&2\n\t@false\n\n'
               'package_reload:\n\tmkdir -p $(TARGET_DIR)/tmp\n\t$(OPKG) update >&2\n')
-    return text[:start] + frozen + text[end:]
+    return freeze_key_lifecycle(text[:start] + frozen + text[end:])
 
 
 def native_context(source, abi):
@@ -130,7 +181,7 @@ def package_bank(packages, profile):
     result, names, filenames = [], set(), set()
     abi = profile['firmware']['kernel_version']
     arch = profile['firmware']['architecture']
-    for path in sorted(packages):
+    for path in sorted(packages, key=lambda item: (item.name, str(item))):
         require(path.is_file() and not path.is_symlink() and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+~-]*\.ipk', path.name),
                 'unsafe native package filename')
         control = read_control(path)
@@ -190,6 +241,7 @@ def verify_tree(tree, profile, public_key, usign, source=None, native_packages=N
     revision = re.findall(r'^REVISION\s*:?=\s*r\d+(?:\+\d+)?-([0-9a-f]{7,40})\s*$', (tree / 'include/version.mk').read_text(), re.M)
     require(len(revision) == 1 and profile['firmware']['commit'].startswith(revision[0]), 'ImageBuilder baked source revision mismatch')
     require(FROZEN_MARKER in (tree / 'Makefile').read_text(), 'ImageBuilder mutable package lifecycle')
+    verify_key_lifecycle((tree / 'Makefile').read_text())
     if source is not None:
         require((tree / 'Makefile').read_text() == freeze_makefile((Path(source) / 'target/imagebuilder/files/Makefile').read_text()),
                 'ImageBuilder Makefile differs from approved native transformation')

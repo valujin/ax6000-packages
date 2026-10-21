@@ -144,10 +144,10 @@ def verify(profile, lock, installed, read_file, check_mode, source=None, native_
         verified[path] = {'sha256': digest, 'size': len(actual), 'mode': '0644'}
     translations = []
     if profile.get('asu'):
-        translations.append('www/luci-static/resources/i18n/attendedsysupgrade.ru.lmo')
+        translations.append('usr/lib/lua/luci/i18n/attendedsysupgrade.ru.lmo')
     pair = lock.get('pbr') if profile.get('pbr_source') else None
     if pair:
-        translations += ['www/luci-static/resources/i18n/pbr.' + language.replace('_', '-') + '.lmo'
+        translations += ['usr/lib/lua/luci/i18n/pbr.' + language.replace('_', '-') + '.lmo'
                          for language in pair.get('translations', {})]
     for path in translations:
         data = read_file(path, 2 * 1024**2)

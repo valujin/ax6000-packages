@@ -114,7 +114,7 @@ class MatchingBuilderTest(unittest.TestCase):
             path.write_bytes(value)
         self.tree = self.root / 'immortalwrt-imagebuilder-mediatek-filogic.Linux-x86_64'
         self.tree.mkdir()
-        (self.tree / 'Makefile').write_text('all:\n\ttrue\n\npackage_index: FORCE\n\tunsafe\n\npackage_reload:\n\tunsafe\n\npackage_list: FORCE\n\ttrue\n')
+        (self.tree / 'Makefile').write_bytes(gzip.decompress((Path(__file__).parent / 'fixtures/imagebuilder-opkg-ec9ef10-Makefile.gz').read_bytes()))
         native_makefile = self.source / 'target/imagebuilder/files/Makefile'
         native_makefile.parent.mkdir(parents=True)
         shutil.copy2(self.tree / 'Makefile', native_makefile)
@@ -165,6 +165,22 @@ class MatchingBuilderTest(unittest.TestCase):
             ib.verify_archive(other, self.profile, self.public, self.usign, self.root / 'wrong-verified')
         self.assertFalse((self.root / 'wrong-verified').exists())
         self.assertEqual(ib.sha256(self.archive), result['sha256'])
+
+    def test_native_feed_directories_do_not_change_canonical_bank_identity(self):
+        for name, directory in [('base-files.ipk', 'zz-feed'), ('kernel.ipk', 'aa-feed')]:
+            target = self.source / 'bin' / directory / name
+            target.parent.mkdir()
+            (self.packages / name).rename(target)
+        native = ib.package_bank((self.source / 'bin').rglob('*.ipk'), self.profile)
+        flattened = ib.package_bank((self.tree / 'packages').glob('*.ipk'), self.profile)
+        self.assertEqual(native, flattened)
+        self.assertEqual([x['filename'] for x in native], sorted(x['filename'] for x in native))
+        self.export()
+        duplicate = self.source / 'bin/third-feed/base-files.ipk'
+        duplicate.parent.mkdir()
+        shutil.copy2(self.source / 'bin/zz-feed/base-files.ipk', duplicate)
+        with self.assertRaisesRegex(ValueError, 'duplicate native package identity'):
+            ib.package_bank((self.source / 'bin').rglob('*.ipk'), self.profile)
 
     def test_missing_imagebuilder_and_incomplete_standalone_bank_fail(self):
         with self.assertRaisesRegex(ValueError, 'missing'):
