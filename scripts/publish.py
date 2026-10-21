@@ -86,6 +86,22 @@ def validate_package(control, profile):
             raise ValueError('Kernel modules require target architecture')
 
 
+def index_paragraph(control, filename, size, checksum):
+    """Keep download metadata before Description, as upstream ipkg-make-index.
+
+    opkg install/download mask descriptions. A whitespace-only continuation
+    then ends the parsed package, so fields after a multi-paragraph Description
+    are invisible to those commands even though `opkg info` can display them.
+    Preserve every control value, including the complete Description.
+    """
+    fields = {key: value for key, value in control.items()
+              if key not in ('Filename', 'Size', 'SHA256sum', 'Description')}
+    fields.update(Filename=filename, Size=str(size), SHA256sum=checksum)
+    if 'Description' in control:
+        fields['Description'] = control['Description']
+    return '\n'.join(f'{key}: {value}' for key, value in fields.items())
+
+
 def stage_feed(raw, output, profile):
     if profile.get('enabled') is not True:
         raise ValueError('Profile disabled; supply matching firmware SDK first')
@@ -119,10 +135,8 @@ def stage_feed(raw, output, profile):
     for path, control in validated:
         target = feed / path.name
         shutil.copy2(path, target)
-        fields = {k: v for k, v in control.items() if k not in ('Filename', 'Size', 'SHA256sum')}
-        fields.update(Filename=path.name, Size=str(target.stat().st_size),
-                      SHA256sum=sha256_file(target))
-        paragraphs.append('\n'.join(f'{key}: {value}' for key, value in fields.items()))
+        paragraphs.append(index_paragraph(control, path.name, target.stat().st_size,
+                                          sha256_file(target)))
     index = ('\n\n'.join(paragraphs) + '\n\n').encode()
     (feed / 'Packages').write_bytes(index)
     (feed / 'Packages.gz').write_bytes(gzip.compress(index, mtime=0))

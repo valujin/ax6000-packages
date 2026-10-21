@@ -19,7 +19,7 @@ import subprocess
 import tarfile
 import tempfile
 
-from publish import read_control
+from publish import index_paragraph, read_control
 
 FORMAT = 1
 REPOSITORIES = 'src imagebuilder file:packages\noption check_signature\n'
@@ -208,9 +208,7 @@ def package_index(bank):
     paragraphs = []
     for item in bank:
         # Preserve all control fields including dependency/Provides/ABI metadata.
-        fields = {k: v for k, v in item['control'].items() if k not in ('Filename', 'Size', 'SHA256sum')}
-        fields.update({'Filename': item['filename'], 'Size': str(item['size']), 'SHA256sum': item['sha256']})
-        paragraphs.append('\n'.join(k + ': ' + v for k, v in fields.items()))
+        paragraphs.append(index_paragraph(item['control'], item['filename'], item['size'], item['sha256']))
     return ('\n\n'.join(paragraphs) + '\n\n').encode()
 
 

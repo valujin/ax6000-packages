@@ -27,9 +27,25 @@ jobs:
             -S "$RUNNER_TEMP/usign-source" -B "$RUNNER_TEMP/usign-build"
           bash scripts/resource-limit.sh --jobs 1 -- cmake \
             --build "$RUNNER_TEMP/usign-build" --parallel 1
+      - name: Build pinned native host opkg for parser integration
+        run: |
+          cpu=$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')
+          sudo systemd-run --scope --quiet \
+            --property=CPUQuota=100% --property="AllowedCPUs=$cpu" \
+            --property=MemoryMax=2G --property=MemorySwapMax=0 \
+            -- sudo -u "$(id -un)" -- python3 \
+            "$GITHUB_WORKSPACE/scripts/build-opkg-host.py" \
+            --require-cgroup --work-dir "$RUNNER_TEMP/opkg-host"
+      - name: Save host opkg source and binary provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-opkg-tool-proof
+          path: ${{ runner.temp }}/opkg-host/tool-proof.json
+          if-no-files-found: error
       - name: Python unit tests
         env:
           USIGN: ${{ runner.temp }}/usign-build/usign
+          HOST_OPKG: ${{ runner.temp }}/opkg-host/opkg-build/src/opkg-cl
         run: python3 -m unittest discover -s tests -v
       - name: Shell syntax
         run: |
