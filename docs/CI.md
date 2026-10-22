@@ -1,5 +1,11 @@
 # GitHub Actions and Pages
 
+> **Retired Linux 6.6 line:** all six GitHub Actions workflows are disabled.
+> Their original definitions are preserved in [retired-workflows](retired-workflows/README.md)
+> outside GitHub's workflow discovery directory. The implementation notes below
+> describe the historical pipeline; no monitoring, builds or publication runs
+> remain scheduled or manually dispatchable. Existing releases and Pages stay intact.
+
 This is a standalone package repository. Builds use GitHub hosted
 `ubuntu-24.04` runners. `scripts/build.sh` limits compilation to half the runner's
 available CPUs; no runner or build daemon is installed on the router or server.
@@ -28,8 +34,7 @@ branch protection. Permission or branch-rule failures fail the job visibly.
 The heartbeat file is outside the recipe and profile digests, so it does not
 cause package rebuilds. [Pushes using `GITHUB_TOKEN` do not trigger push workflows
 or Pages builds](https://docs.github.com/en/actions/concepts/security/github_token).
-An already disabled workflow must first be re-enabled, for example with
-`gh workflow enable packages.yml --repo valujin/ax6000-packages`.
+This Linux 6.6 line is retired; its monitoring workflow remains disabled.
 
 The package workflow uses the enabled `profiles/redmi-ax6000.json` for the
 published Linux 6.6.133 generation. Its SDK archive was tested by an independent
