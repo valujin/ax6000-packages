@@ -259,6 +259,16 @@ class PrepareTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tailscale"):
             prepare.verify_selection(self.profile, self.sdk)
 
+    def test_compact_source_lock_validates_for_opkg_and_rejects_foreign_architecture(self):
+        self.lock['tailscale'] = json.loads((ROOT / 'tests/fixtures/tailscale-source-1.104.2.json').read_text())
+        try:
+            prepare.validate(self.profile, self.lock)
+        except ValueError as error:
+            self.fail('Reviewed compact source lock must validate for OPKG: ' + str(error))
+        self.profile['firmware']['architecture'] = 'mips_24kc'
+        with self.assertRaisesRegex(ValueError, 'ARM64'):
+            prepare.validate(self.profile, self.lock)
+
     def test_static_tailscale_preserves_service_wrappers_without_go_dependency(self):
         recipe = self.sdk / "feeds/packages/net/tailscale"
         recipe.mkdir(parents=True)

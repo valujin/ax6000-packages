@@ -1,0 +1,20 @@
+{
+  "files": {
+    "include/package-pack.mk": {
+      "fixture": "tests/fixtures/ax6000-66-include-package-pack.mk.gz",
+      "sha256": "bab0ffd4498e2acd49059b06b1c34362e3c648f1293f7161c3af334dbc2fbb83",
+      "size": 14365
+    },
+    "rules.mk": {
+      "fixture": "tests/fixtures/ax6000-66-rules.mk.gz",
+      "sha256": "c2896b62b120f0cc0c19b122506360d73c95588bca0beb4c064feb8f606bbee8",
+      "size": 16947
+    },
+    "scripts/rstrip.sh": {
+      "fixture": "tests/fixtures/ax6000-66-scripts-rstrip.sh.gz",
+      "sha256": "89bd54e8ce186f49b881aa0d72919495a15d716e9f69d9b266ab0ca28265d87d",
+      "size": 1261
+    }
+  },
+  "source_commit": "ec9ef10efc65da1e6d1de4e2c043c0e13d08eed8"
+}
