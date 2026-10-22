@@ -64,13 +64,24 @@ CLI-to-daemon IPC all passed. This tests the shared build helper and emulated
 binary; it does **not** verify a completed APK/IPK package, actual SDK host-tool
 compatibility, real router performance or VPN data-plane operation.
 
-The next package acceptance step uses the matching real SDK and generated
-override: configure/prefetch with access to pinned downloads, then
-`make package/ax6000-overrides/tailscale/compile V=s`, inspect the emitted actual
-APK/IPK control/payload, and verify the one-file/two-relative-symlink layout,
-unchanged wrappers, providers and actual version. It needs no firmware/kernel
-rebuild. Full native Make install expansion is covered by the lightweight tests;
-real package creation and router testing remain required before feed promotion.
+The [actual SDK package workflow](https://github.com/valujin/ax6000-packages-6.12/actions/runs/39702777128)
+also passed. The 6.6 package recipe is `3ce41f233b6f91bf04a7570b9703088caf27cdd7`;
+the separate workflow commit is `bd433580538c5cb611e32881ad0bbe9ac5ba5a7e`.
+Normal SDK configure, compile, install and export produced the IPK, with the same
+packed ELF, two relative links, native init/config/KEEP bytes and dependencies.
+The packed ELF passed isolated ARM64 QEMU CLI/daemon IPC and feature checks.
+
+The [published 6.6 snapshot](https://github.com/valujin/ax6000-packages/releases/tag/packages-66-5fafd84a3bd02cb0b267cc44276f7c67391781c738bca206947ddc48b18981f0)
+contains `tailscale_1.104.2-r3_aarch64_cortex-a53.ipk`, 11,911,941 bytes,
+SHA256 `8b423aade0647b2147533f5811a425f26e47d521f6330f87b116b928710dafb2`.
+It is 67.71% smaller than r2; Installed-Size is 12,236,800 bytes. Both signed OPKG
+install/upgrade simulations passed on separate complete 408-package native DB
+copies, preserving installed state during simulation. The 1,379 other IPKs and
+original firmware/SDK/IB catalog bytes were retained. Deployment
+[39709478070](https://github.com/valujin/ax6000-packages/actions/runs/39709478070)
+passed, followed by full-byte HTTPS/signature checks of the changed files;
+unchanged files explicitly inherit the earlier full-site verification. These
+checks do not establish real-router performance or VPN data-plane operation.
 
 Primary implementation references:
 
