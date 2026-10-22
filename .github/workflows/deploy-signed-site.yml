@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Immutable firmware Release in valujin/ax6000-packages
+        description: Immutable firmware or reviewed Tail-only snapshot Release in valujin/ax6000-packages
         required: true
         type: string
       archive_sha256:
@@ -14,6 +14,14 @@ on:
       snapshot_sha256:
         description: Reviewed SHA256 of signed snapshot-manifest.json
         required: true
+        type: string
+      package_predecessor_sha256:
+        description: Only for Tail r2-to-r3 package snapshot; exact current signed live manifest SHA256
+        required: false
+        type: string
+      firmware_release_tag:
+        description: Only for package snapshot; original immutable firmware Release (unchanged catalog)
+        required: false
         type: string
 
 concurrency:
@@ -49,23 +57,40 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
           SNAPSHOT_SHA256: ${{ inputs.snapshot_sha256 }}
+          PREDECESSOR_SHA256: ${{ inputs.package_predecessor_sha256 }}
+          FIRMWARE_RELEASE_TAG: ${{ inputs.firmware_release_tag }}
         run: |
-          [[ "$RELEASE_TAG" =~ ^firmware-redmi-ax6000-[0-9a-f]{12}-[0-9a-f]{12}$ ]]
           [[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$SNAPSHOT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          extra=()
+          if [[ "$RELEASE_TAG" == "packages-66-$SNAPSHOT_SHA256" ]]; then
+            [[ "$PREDECESSOR_SHA256" =~ ^[0-9a-f]{64}$ ]]
+            [[ "$FIRMWARE_RELEASE_TAG" =~ ^firmware-redmi-ax6000-[0-9a-f]{12}-[0-9a-f]{12}$ ]]
+            extra=(--expected-predecessor-sha256 "$PREDECESSOR_SHA256" --firmware-release-tag "$FIRMWARE_RELEASE_TAG")
+            gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/valujin/ax6000-packages/releases/tags/$FIRMWARE_RELEASE_TAG" > "$RUNNER_TEMP/firmware-before.json"
+          else
+            [[ "$RELEASE_TAG" =~ ^firmware-redmi-ax6000-[0-9a-f]{12}-[0-9a-f]{12}$ ]]
+            [[ -z "$PREDECESSOR_SHA256" && -z "$FIRMWARE_RELEASE_TAG" ]]
+          fi
           mkdir release-download
           gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/valujin/ax6000-packages/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release-before.json"
           python3 scripts/deploy-signed-site.py --release-tag "$RELEASE_TAG" \
             --release-metadata "$RUNNER_TEMP/release-before.json" \
-            --expected-archive-sha256 "$ARCHIVE_SHA256" --expected-snapshot-sha256 "$SNAPSHOT_SHA256"
+            --expected-archive-sha256 "$ARCHIVE_SHA256" --expected-snapshot-sha256 "$SNAPSHOT_SHA256" "${extra[@]}"
           gh release download "$RELEASE_TAG" --repo valujin/ax6000-packages --dir release-download \
             --pattern public.tar.zst --pattern public.tar.zst.sha256
           gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/valujin/ax6000-packages/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release-after.json"
           python3 scripts/deploy-signed-site.py --release-tag "$RELEASE_TAG" \
             --release-metadata "$RUNNER_TEMP/release-after.json" \
-            --previous-release-metadata "$RUNNER_TEMP/release-before.json"
+            --previous-release-metadata "$RUNNER_TEMP/release-before.json" \
+            --expected-snapshot-sha256 "$SNAPSHOT_SHA256" "${extra[@]}"
+          if [[ -n "$PREDECESSOR_SHA256" ]]; then
+            gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/valujin/ax6000-packages/releases/tags/$FIRMWARE_RELEASE_TAG" > "$RUNNER_TEMP/firmware-after.json"
+          fi
       - name: Build the pinned official verifier outside the archive
         run: |
           pin=f1f65026a94137c91b5466b149ef3ea3f20091e9
@@ -82,14 +107,41 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
           SNAPSHOT_SHA256: ${{ inputs.snapshot_sha256 }}
+          PREDECESSOR_SHA256: ${{ inputs.package_predecessor_sha256 }}
+          FIRMWARE_RELEASE_TAG: ${{ inputs.firmware_release_tag }}
         run: |
+          extra=()
+          if [[ -n "$PREDECESSOR_SHA256" ]]; then
+            curl --fail --silent --show-error --proto '=https' --max-time 60 --max-filesize 33554432 \
+              https://valujin.github.io/ax6000-packages/snapshot-manifest.json -o "$RUNNER_TEMP/live-manifest.json"
+            curl --fail --silent --show-error --proto '=https' --max-time 60 --max-filesize 1024 \
+              https://valujin.github.io/ax6000-packages/snapshot-manifest.sig -o "$RUNNER_TEMP/live-manifest.sig"
+            printf '%s  %s\n' "$PREDECESSOR_SHA256" "$RUNNER_TEMP/live-manifest.json" | sha256sum -c -
+            feed_path=$(python3 - "$RUNNER_TEMP/live-manifest.json" <<'PY_INDEX'
+          import json,re,sys
+          manifest=json.load(open(sys.argv[1]))
+          assert manifest.get('cohort')=='66' and manifest.get('profile_id')=='redmi-ax6000'
+          abi=manifest['kernel_version']
+          assert isinstance(abi,str) and re.fullmatch(r'6\.6\.[A-Za-z0-9.~+_-]+',abi)
+          print('feeds/redmi-ax6000/'+abi+'/Packages')
+          PY_INDEX
+            )
+            curl --fail --silent --show-error --proto '=https' --max-time 60 --max-filesize 16777216 \
+              "https://valujin.github.io/ax6000-packages/$feed_path" -o "$RUNNER_TEMP/predecessor-Packages"
+            extra=(--package-predecessor "$RUNNER_TEMP/live-manifest.json" \
+              --package-predecessor-signature "$RUNNER_TEMP/live-manifest.sig" \
+              --package-predecessor-index "$RUNNER_TEMP/predecessor-Packages" \
+              --expected-predecessor-sha256 "$PREDECESSOR_SHA256" --firmware-release-tag "$FIRMWARE_RELEASE_TAG" \
+              --previous-firmware-release-metadata "$RUNNER_TEMP/firmware-before.json" \
+              --firmware-release-metadata "$RUNNER_TEMP/firmware-after.json")
+          fi
           python3 scripts/deploy-signed-site.py --release-tag "$RELEASE_TAG" \
             --release-metadata "$RUNNER_TEMP/release-after.json" \
             --previous-release-metadata "$RUNNER_TEMP/release-before.json" \
             --archive release-download/public.tar.zst --checksum release-download/public.tar.zst.sha256 \
             --output public --expected-profile profiles/redmi-ax6000-new.json \
             --public-key keys/repository.pub --usign "$RUNNER_TEMP/usign-build/usign" \
-            --expected-archive-sha256 "$ARCHIVE_SHA256" --expected-snapshot-sha256 "$SNAPSHOT_SHA256"
+            --expected-archive-sha256 "$ARCHIVE_SHA256" --expected-snapshot-sha256 "$SNAPSHOT_SHA256" "${extra[@]}"
           printf 'Verified existing signed site from %s\nArchive SHA256: %s\nSnapshot SHA256: %s\n' \
             "$RELEASE_TAG" "$ARCHIVE_SHA256" "$SNAPSHOT_SHA256" >> "$GITHUB_STEP_SUMMARY"
       - name: Prepare Pages
@@ -110,6 +162,22 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Refuse a stale package-only predecessor before deployment
+        if: inputs.package_predecessor_sha256 != ''
+        env:
+          EXPECTED_SHA256: ${{ inputs.package_predecessor_sha256 }}
+        run: |
+          curl --fail --silent --show-error --proto '=https' --max-time 60 --max-filesize 33554432 \
+            https://valujin.github.io/ax6000-packages/snapshot-manifest.json -o "$RUNNER_TEMP/live-manifest.json"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$RUNNER_TEMP/live-manifest.json" | sha256sum -c -
       - name: Atomically deploy the existing verified signed site
         id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+      - name: Verify package-only deployed snapshot SHA256
+        if: inputs.package_predecessor_sha256 != ''
+        env:
+          EXPECTED_SHA256: ${{ inputs.snapshot_sha256 }}
+        run: |
+          curl --fail --silent --show-error --proto '=https' --max-time 60 --max-filesize 33554432 \
+            https://valujin.github.io/ax6000-packages/snapshot-manifest.json -o "$RUNNER_TEMP/deployed-manifest.json"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$RUNNER_TEMP/deployed-manifest.json" | sha256sum -c -

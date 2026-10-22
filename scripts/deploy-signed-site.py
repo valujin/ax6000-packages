@@ -45,8 +45,10 @@ def read_json(path, limit=8 * 1024**2):
                       parse_constant=lambda value: require(False, 'Nonfinite JSON value: ' + value))
 
 
-def release_identity(release, tag):
-    require(isinstance(tag, str) and TAG.fullmatch(tag), 'Invalid immutable release tag')
+def release_identity(release, tag, *, package_snapshot_sha=None):
+    package_tag = (isinstance(package_snapshot_sha, str) and SHA.fullmatch(package_snapshot_sha)
+                   and tag == 'packages-66-' + package_snapshot_sha)
+    require(isinstance(tag, str) and (TAG.fullmatch(tag) if package_snapshot_sha is None else package_tag), 'Invalid immutable release tag')
     require(isinstance(release, dict) and release.get('immutable') is True,
             'Source release must be immutable')
     require(release.get('draft') is False, 'Source release must not be a draft')
@@ -232,6 +234,77 @@ def verify_release_catalog(root, release, release_tag):
                 'Release catalog asset URL differs: ' + filename)
 
 
+def verify_package_update(root, manifest, context, public_key, usign):
+    """Allow only the reviewed optional Tail 1.104.2 r2->r3 supplement."""
+    require(isinstance(context, dict) and set(context) == {
+        'predecessor_manifest', 'predecessor_signature', 'predecessor_sha256', 'predecessor_index',
+        'firmware_tag', 'firmware_before', 'firmware_after'}, 'Incomplete package update evidence')
+    path = Path(context['predecessor_manifest'])
+    expected = context['predecessor_sha256']
+    signed = Path(context['predecessor_signature'])
+    require(path.is_file() and not path.is_symlink() and 0 < path.stat().st_size <= 32 * 1024**2
+            and signed.is_file() and not signed.is_symlink() and 0 < signed.stat().st_size <= 1024,
+            'Missing, linked or oversized predecessor metadata')
+    require(isinstance(expected, str) and SHA.fullmatch(expected)
+            and publish.sha256_file(path) == expected, 'Signed predecessor SHA256 differs')
+    signature(usign, public_key, path, context['predecessor_signature'])
+    previous = read_json(path, 32 * 1024**2)
+    require(isinstance(previous, dict) and set(previous) == set(manifest)
+            and all(previous.get(k) == v for k, v in manifest.items() if k != 'files'),
+            'Package update changes native snapshot identity')
+    rows = previous.get('files')
+    require(isinstance(rows, list) and 0 < len(rows) <= 100000, 'Invalid predecessor inventory')
+    before = {}
+    for row in rows:
+        require(isinstance(row, dict) and set(row) == {'path', 'size', 'sha256'}, 'Malformed predecessor entry')
+        name = safe_path(row['path'])
+        require(name not in before and name not in {'snapshot-manifest.json', 'snapshot-manifest.sig'}
+                and type(row['size']) is int and 0 <= row['size'] < LIMIT
+                and isinstance(row['sha256'], str) and SHA.fullmatch(row['sha256']), 'Invalid predecessor entry')
+        before[name] = row
+    after = {row['path']: row for row in manifest['files']}
+    profile = read_json(root / 'profile.json')
+    feed = 'feeds/' + profile['id'] + '/' + profile['firmware']['kernel_version']
+    arch = profile['firmware']['architecture']
+    old = feed + '/tailscale_1.104.2-r2_' + arch + '.ipk'
+    new = feed + '/tailscale_1.104.2-r3_' + arch + '.ipk'
+    indexes = {feed + '/' + name for name in ('Packages', 'Packages.gz', 'Packages.sig')}
+    require(set(before) - set(after) == {old} and set(after) - set(before) == {new}
+            and {name for name in set(before) & set(after) if before[name] != after[name]} == indexes,
+            'Package update must change only Tail r2->r3 and its three indexes')
+    previous_index = Path(context['predecessor_index'])
+    index_entry = before[feed + '/Packages']
+    require(previous_index.is_file() and not previous_index.is_symlink()
+            and previous_index.stat().st_size == index_entry['size'] <= 16 * 1024**2
+            and publish.sha256_file(previous_index) == index_entry['sha256'], 'Signed predecessor index differs')
+    def paragraphs(path):
+        result = {}
+        for paragraph in path.read_text().strip().split('\n\n'):
+            names = [line[9:] for line in paragraph.splitlines() if line.startswith('Package: ')]
+            require(len(names) == 1 and names[0] not in result, 'Duplicate or missing index package')
+            result[names[0]] = paragraph
+        return result
+    old_rows, new_rows = paragraphs(previous_index), paragraphs(root / feed / 'Packages')
+    require(set(old_rows) == set(new_rows) and 'tailscale' in new_rows
+            and all(old_rows[name] == new_rows[name] for name in old_rows if name != 'tailscale'),
+            'Package update changes non-Tail index metadata')
+    require('\nVersion: 1.104.2-r2\n' in '\n' + old_rows['tailscale'] + '\n'
+            and '\nFilename: ' + Path(old).name + '\n' in '\n' + old_rows['tailscale'] + '\n',
+            'Predecessor index Tail identity differs')
+    control = publish.read_control(root / new)
+    require(all(control.get(k) == v for k, v in {'Package': 'tailscale', 'Version': '1.104.2-r3',
+            'Architecture': arch, 'Provides': 'tailscaled'}.items()), 'Replacement Tail control/provider differs')
+    publish.validate_package(control, profile)
+    require(all('\n' + key + ': ' + control[key] + '\n' in '\n' + new_rows['tailscale'] + '\n'
+                for key in ('Package', 'Version', 'Architecture', 'Provides')),
+            'Signed Tail index/control identity differs')
+    tag = context['firmware_tag']
+    require(release_identity(context['firmware_before'], tag) == release_identity(context['firmware_after'], tag),
+            'Original immutable firmware release changed')
+    for release in (context['firmware_before'], context['firmware_after']):
+        verify_release_catalog(root, release, tag)
+
+
 class BoundedReader:
     """Bound tar headers/PAX metadata as well as regular-file payload bytes."""
     def __init__(self, stream, limit):
@@ -247,10 +320,18 @@ class BoundedReader:
 
 
 def import_site(archive, checksum, output, expected_profile, public_key, usign,
-                archive_sha, snapshot_sha, release_tag, *, max_bytes=LIMIT, release_metadata=None):
+                archive_sha, snapshot_sha, release_tag, *, max_bytes=LIMIT, release_metadata=None, package_update=None):
     archive, checksum, output = Path(archive), Path(checksum), Path(output)
     require(isinstance(archive_sha, str) and SHA.fullmatch(archive_sha), 'Invalid expected archive SHA256')
-    require(TAG.fullmatch(release_tag), 'Invalid source release tag')
+    package_mode = package_update is not None
+    if package_mode:
+        require(isinstance(package_update, dict) and release_tag == 'packages-66-' + snapshot_sha,
+                'Package transport tag must bind exact signed snapshot')
+        require(TAG.fullmatch(package_update.get('firmware_tag', '')), 'Invalid original firmware release tag')
+        firmware_tag = package_update['firmware_tag']
+    else:
+        require(TAG.fullmatch(release_tag), 'Invalid source release tag')
+        firmware_tag = release_tag
     require(not output.exists() and not output.is_symlink(), 'Import output must be fresh')
     require(archive.is_file() and not archive.is_symlink() and 0 < archive.stat().st_size < LIMIT,
             'Archive compressed size limit exceeded')
@@ -293,8 +374,10 @@ def import_site(archive, checksum, output, expected_profile, public_key, usign,
             while stream.read(1024 * 1024):
                 pass
             require(process.wait(timeout=20) == 0, 'Invalid zstd archive')
-        manifest = verify_site(temporary, expected_profile, public_key, usign, snapshot_sha, release_tag)
-        if release_metadata is not None:
+        manifest = verify_site(temporary, expected_profile, public_key, usign, snapshot_sha, firmware_tag)
+        if package_mode:
+            verify_package_update(temporary, manifest, package_update, public_key, usign)
+        elif release_metadata is not None:
             verify_release_catalog(temporary, release_metadata, release_tag)
         temporary.rename(output)
         return manifest
@@ -321,9 +404,28 @@ def main():
     parser.add_argument('--usign', type=Path)
     parser.add_argument('--expected-archive-sha256')
     parser.add_argument('--expected-snapshot-sha256')
+    parser.add_argument('--package-predecessor', type=Path)
+    parser.add_argument('--package-predecessor-signature', type=Path)
+    parser.add_argument('--package-predecessor-index', type=Path)
+    parser.add_argument('--expected-predecessor-sha256')
+    parser.add_argument('--firmware-release-tag')
+    parser.add_argument('--firmware-release-metadata', type=Path)
+    parser.add_argument('--previous-firmware-release-metadata', type=Path)
     args = parser.parse_args()
+    package_mode = args.release_tag.startswith('packages-66-')
+    if package_mode:
+        require(args.expected_snapshot_sha256 and SHA.fullmatch(args.expected_snapshot_sha256)
+                and args.expected_predecessor_sha256 and SHA.fullmatch(args.expected_predecessor_sha256)
+                and args.firmware_release_tag and TAG.fullmatch(args.firmware_release_tag),
+                'Package-only mode requires exact snapshot/predecessor pins and original firmware tag')
+    else:
+        require(not any((args.package_predecessor, args.package_predecessor_signature, args.package_predecessor_index,
+                         args.expected_predecessor_sha256, args.firmware_release_tag,
+                         args.firmware_release_metadata, args.previous_firmware_release_metadata)),
+                'Package-only evidence requires explicit package transport mode')
+    transport_args = {'package_snapshot_sha': args.expected_snapshot_sha256} if package_mode else {}
     release = read_json(args.release_metadata)
-    identity = release_identity(release, args.release_tag)
+    identity = release_identity(release, args.release_tag, **transport_args)
     for value in (args.expected_archive_sha256, args.expected_snapshot_sha256):
         require(value is None or SHA.fullmatch(value), 'Expected SHA256 must be 64 lowercase hexadecimal characters')
     if args.expected_archive_sha256:
@@ -331,7 +433,7 @@ def main():
         require(asset.get('digest') in (None, 'sha256:' + args.expected_archive_sha256),
                 'Release asset digest differs from operator-pinned archive SHA256')
     if args.previous_release_metadata:
-        require(identity == release_identity(read_json(args.previous_release_metadata), args.release_tag),
+        require(identity == release_identity(read_json(args.previous_release_metadata), args.release_tag, **transport_args),
                 'Immutable release identity changed during download')
     if args.archive is not None:
         require(all((args.checksum, args.output, args.expected_profile, args.public_key, args.usign,
@@ -342,9 +444,21 @@ def main():
             require(path.stat().st_size == asset['size'], 'Downloaded release asset size differs')
             require(asset.get('digest') in (None, 'sha256:' + publish.sha256_file(path)),
                     'Downloaded release asset digest differs')
+        context = None
+        if package_mode:
+            require(all((args.package_predecessor, args.package_predecessor_signature, args.package_predecessor_index,
+                         args.firmware_release_metadata, args.previous_firmware_release_metadata)),
+                    'Package import requires signed predecessor and original firmware before/after metadata')
+            context = {'predecessor_manifest': args.package_predecessor,
+                       'predecessor_signature': args.package_predecessor_signature,
+                       'predecessor_index': args.package_predecessor_index,
+                       'predecessor_sha256': args.expected_predecessor_sha256,
+                       'firmware_tag': args.firmware_release_tag,
+                       'firmware_before': read_json(args.previous_firmware_release_metadata),
+                       'firmware_after': read_json(args.firmware_release_metadata)}
         result = import_site(args.archive, args.checksum, args.output, args.expected_profile,
                              args.public_key, args.usign, args.expected_archive_sha256,
-                             args.expected_snapshot_sha256, args.release_tag, release_metadata=release)
+                             args.expected_snapshot_sha256, args.release_tag, release_metadata=release, package_update=context)
         print('Verified signed public site:', result['build_id'])
     else:
         print('Verified immutable release transport identity:', identity[0])

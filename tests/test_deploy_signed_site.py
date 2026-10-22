@@ -321,7 +321,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('on:\n  workflow_dispatch:\n    inputs:\n', text)
         self.assertNotRegex(text, r'^  (?:push|pull_request|schedule|workflow_run):')
         self.assertEqual(set(re.findall(r'^      ([a-z_0-9]+):$', text, re.MULTILINE)),
-                         {'release_tag', 'archive_sha256', 'snapshot_sha256'})
+                         {'release_tag', 'archive_sha256', 'snapshot_sha256',
+                          'package_predecessor_sha256', 'firmware_release_tag'})
         self.assertIn('  group: package-repository\n  cancel-in-progress: false', text)
         self.assertIn('github.event.repository.default_branch', text)
         self.assertIn('  deploy:\n    needs: verify\n', text)
